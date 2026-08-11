@@ -4,20 +4,24 @@ import { Button } from '../../ds/Button';
 import { Chip } from '../../ds/Chip';
 import { Icon, TrashButton } from '../../ds/Icon';
 import { fmtDate } from '../../lib/dates';
+import { useAccess } from '../../state/access';
 import { useApp } from '../../state/AppState';
 
 const GRID = '2fr 0.85fr 1fr 0.9fr 32px';
 
 export function DocumentsTab({ client }: { client: Client }) {
   const { actions } = useApp();
+  const { canWrite } = useAccess();
 
   return (
     <div style={{ marginTop: 20 }}>
-      <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 12 }}>
-        <Button variant="secondary" size="sm" onClick={() => actions.openAddDocument(client.id)}>
-          + Add document
-        </Button>
-      </div>
+      {canWrite && (
+        <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 12 }}>
+          <Button variant="secondary" size="sm" onClick={() => actions.openAddDocument(client.id)}>
+            + Add document
+          </Button>
+        </div>
+      )}
       <div className="card card--clip">
         <TableHead
           gridTemplateColumns={GRID}
@@ -58,7 +62,11 @@ export function DocumentsTab({ client }: { client: Client }) {
               </Chip>
             </div>
             <span style={{ whiteSpace: 'nowrap', color: 'var(--ink-3)' }}>{fmtDate(doc.date)}</span>
-            <TrashButton onClick={() => actions.removeItem('documents', client.id, doc.id)} />
+            {canWrite ? (
+              <TrashButton onClick={() => actions.removeItem('documents', client.id, doc.id)} />
+            ) : (
+              <span />
+            )}
           </div>
         ))}
         {client.documents.length === 0 && <EmptyRow>No documents on file.</EmptyRow>}

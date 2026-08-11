@@ -1,12 +1,27 @@
-import { uid } from '../lib/dates';
-import { ALL_ACCESS } from './options';
-import type { Client, FollowUp, Invoice, Teammate } from './types';
+// Bootstrap data for a fresh database. Amounts here are whole currency units;
+// the seeder converts them to the minor units the schema stores.
+import { randomUUID } from 'node:crypto';
+import { ALL_ACCESS } from '../../../src/data/options';
+import type { Client, FollowUp, Invoice, Teammate } from '../../../src/data/types';
 
-export const TEAM_SEED: Teammate[] = [
-  { id: 'tm1', name: 'Priya Shah', role: 'Ops Lead', permission: 'Owner', access: { ...ALL_ACCESS } },
+const uid = (_prefix: string) => randomUUID();
+
+/** A seeded teammate, plus the login the seeder creates for them. */
+export type SeedTeammate = Teammate & { email: string };
+
+export const TEAM_SEED: SeedTeammate[] = [
+  {
+    id: 'tm1',
+    name: 'Priya Shah',
+    email: 'priya@phot.ai',
+    role: 'Ops Lead',
+    permission: 'Owner',
+    access: { ...ALL_ACCESS },
+  },
   {
     id: 'tm2',
     name: 'Daniel Cho',
+    email: 'daniel@phot.ai',
     role: 'Account Manager',
     permission: 'Editor',
     access: { ...ALL_ACCESS, invoices: false },
@@ -14,11 +29,19 @@ export const TEAM_SEED: Teammate[] = [
   {
     id: 'tm3',
     name: 'Maya Fernandes',
+    email: 'maya@phot.ai',
     role: 'Customer Success Manager',
     permission: 'Editor',
     access: { ...ALL_ACCESS, documents: false, phonebook: false, followups: false },
   },
-  { id: 'tm4', name: 'Tom Whitfield', role: 'Delivery Lead', permission: 'Viewer', access: { ...ALL_ACCESS } },
+  {
+    id: 'tm4',
+    name: 'Tom Whitfield',
+    email: 'tom@phot.ai',
+    role: 'Delivery Lead',
+    permission: 'Viewer',
+    access: { ...ALL_ACCESS },
+  },
 ];
 
 export function seedFollowUps(): FollowUp[] {

@@ -10,6 +10,7 @@ import {
 } from '../components/ui';
 import { Chip } from '../ds/Chip';
 import { Chevron } from '../ds/Icon';
+import { useAccess } from '../state/access';
 import { useApp, type FollowUpStatusFilter, type FollowUpSubTab } from '../state/AppState';
 import { useFollowUpRows, usePhonebookRows } from '../state/derive';
 
@@ -20,6 +21,7 @@ export function FollowUpsView() {
   const { state, actions } = useApp();
   const { rows } = useFollowUpRows();
   const phonebook = usePhonebookRows();
+  const { canWrite } = useAccess();
   const isPhonebook = state.followUpSubTab === 'phonebook';
 
   return (
@@ -28,14 +30,16 @@ export function FollowUpsView() {
         title="Follow-ups"
         subtitle="Who the team needs to reach out to — introductions, check-ins, and pending replies, all in one place."
         action={
-          <button
-            type="button"
-            className="btn btn--primary"
-            onClick={isPhonebook ? actions.openAddContactGlobal : actions.openAddFollowUp}
-          >
-            <img src="/assets/icons/add-square.svg" width={16} height={16} className="icon-invert" alt="" />
-            {isPhonebook ? 'Add contact' : 'Add follow-up'}
-          </button>
+          canWrite && (
+            <button
+              type="button"
+              className="btn btn--primary"
+              onClick={isPhonebook ? actions.openAddContactGlobal : actions.openAddFollowUp}
+            >
+              <img src="/assets/icons/add-square.svg" width={16} height={16} className="icon-invert" alt="" />
+              {isPhonebook ? 'Add contact' : 'Add follow-up'}
+            </button>
+          )
         }
       />
 
@@ -153,24 +157,31 @@ export function FollowUpsView() {
                     <span>{row.owner}</span>
                     <span>{row.dueDateFormatted}</span>
                     <span
-                      onClick={() =>
-                        row.status === 'Done'
-                          ? actions.reopenFollowUp(row.id)
-                          : actions.openCompleteFollowUp(row.id)
+                      onClick={
+                        canWrite
+                          ? () =>
+                              row.status === 'Done'
+                                ? actions.reopenFollowUp(row.id)
+                                : actions.openCompleteFollowUp(row.id)
+                          : undefined
                       }
-                      style={{ cursor: 'pointer' }}
+                      style={{ cursor: canWrite ? 'pointer' : 'default' }}
                     >
                       <Chip color={row.statusColor}>{row.statusLabel}</Chip>
                     </span>
-                    <RowMenu
-                      open={state.followUpMenuOpenId === row.id}
-                      onToggle={() => actions.toggleFollowUpMenu(row.id)}
-                    >
-                      <RowMenuItem onClick={() => actions.openEditFollowUp(row.source)}>Edit</RowMenuItem>
-                      <RowMenuItem danger onClick={() => actions.removeFollowUp(row.id)}>
-                        Delete
-                      </RowMenuItem>
-                    </RowMenu>
+                    {canWrite ? (
+                      <RowMenu
+                        open={state.followUpMenuOpenId === row.id}
+                        onToggle={() => actions.toggleFollowUpMenu(row.id)}
+                      >
+                        <RowMenuItem onClick={() => actions.openEditFollowUp(row.source)}>Edit</RowMenuItem>
+                        <RowMenuItem danger onClick={() => actions.removeFollowUp(row.id)}>
+                          Delete
+                        </RowMenuItem>
+                      </RowMenu>
+                    ) : (
+                      <span />
+                    )}
                   </div>
 
                   {expanded && (

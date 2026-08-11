@@ -1,20 +1,24 @@
 import type { Client } from '../../data/types';
 import { Button } from '../../ds/Button';
 import { fmtDate } from '../../lib/dates';
+import { useAccess } from '../../state/access';
 import { useApp } from '../../state/AppState';
 import { SystemTag } from '../OverviewView';
 
 export function ActivityTab({ client }: { client: Client }) {
   const { actions } = useApp();
+  const { canWrite } = useAccess();
   const activity = [...client.activity].sort((a, b) => b.date.localeCompare(a.date));
 
   return (
     <div style={{ marginTop: 20 }}>
-      <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 12 }}>
-        <Button variant="secondary" size="sm" onClick={() => actions.openAddActivity(client.id)}>
-          + Add note
-        </Button>
-      </div>
+      {canWrite && (
+        <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 12 }}>
+          <Button variant="secondary" size="sm" onClick={() => actions.openAddActivity(client.id)}>
+            + Add note
+          </Button>
+        </div>
+      )}
       <div className="card" style={{ padding: '4px 20px' }}>
         {activity.map((act) => (
           <div key={act.id} style={{ padding: '14px 0', borderBottom: '1px solid var(--border-2)' }}>

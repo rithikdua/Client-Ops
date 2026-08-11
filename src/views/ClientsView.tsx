@@ -14,7 +14,7 @@ const HEALTH_ORDER: Record<Health, number> = { 'At Risk': 0, Active: 1, Churned:
 
 export function ClientsView() {
   const { state, actions } = useApp();
-  const { showInvoiceStats } = useAccess();
+  const { showInvoiceStats, canWrite } = useAccess();
 
   const gridTemplateColumns = showInvoiceStats
     ? '1.8fr 1fr 1.1fr 1fr 1fr 1fr 1fr'
@@ -34,7 +34,7 @@ export function ClientsView() {
   if (state.healthFilter !== 'all') rows = rows.filter((r) => r.client.health === state.healthFilter);
   rows.sort((a, b) =>
     state.sortBy === 'value'
-      ? b.client.contractValue - a.client.contractValue
+      ? (b.client.contractValue ?? 0) - (a.client.contractValue ?? 0)
       : state.sortBy === 'health'
         ? HEALTH_ORDER[a.client.health] - HEALTH_ORDER[b.client.health]
         : a.client.name.localeCompare(b.client.name),
@@ -48,10 +48,12 @@ export function ClientsView() {
         title="Clients"
         subtitle={`${total} account${total === 1 ? '' : 's'} under management`}
         action={
-          <button type="button" className="btn btn--primary" onClick={actions.openAddClient}>
-            <img src="/assets/icons/add-square.svg" width={16} height={16} className="icon-invert" alt="" />
-            Add client
-          </button>
+          canWrite && (
+            <button type="button" className="btn btn--primary" onClick={actions.openAddClient}>
+              <img src="/assets/icons/add-square.svg" width={16} height={16} className="icon-invert" alt="" />
+              Add client
+            </button>
+          )
         }
       />
 

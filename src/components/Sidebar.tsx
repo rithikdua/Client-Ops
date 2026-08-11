@@ -19,6 +19,12 @@ const NAV_META: Record<NavKey, { label: string; icon: string }> = {
 export function Sidebar() {
   const { state, actions } = useApp();
   const { access } = useAccess();
+  const initials = (state.me?.name ?? '')
+    .split(' ')
+    .map((part) => part[0] ?? '')
+    .slice(0, 2)
+    .join('')
+    .toUpperCase();
 
   return (
     <aside className="sidebar">
@@ -95,7 +101,7 @@ export function Sidebar() {
         }}
       >
         <div className="sidebar-identity" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-          <Avatar initials="PS" size={28} />
+          <Avatar initials={initials} size={28} />
           <div className="nav-label" style={{ minWidth: 0 }}>
             <div
               style={{
@@ -105,10 +111,23 @@ export function Sidebar() {
                 color: 'var(--ink-1)',
               }}
             >
-              Priya Shah
+              {state.me?.name ?? ''}
             </div>
-            <div style={{ fontSize: 11, color: 'var(--ink-3)' }}>Ops lead</div>
+            <div style={{ fontSize: 11, color: 'var(--ink-3)' }}>{state.me?.role ?? ''}</div>
           </div>
+        </div>
+        <div
+          className="nav-label"
+          onClick={actions.logout}
+          style={{
+            marginTop: 10,
+            fontSize: 11.5,
+            fontWeight: 600,
+            color: 'var(--phot-purple)',
+            cursor: 'pointer',
+          }}
+        >
+          Sign out
         </div>
       </div>
     </aside>

@@ -1,11 +1,15 @@
 import type { BillingCycle } from '../data/types';
 
 /**
- * The demo clock. The seeded accounts are dated around this day so the overdue
- * invoices, due-soon deliverables and billing countdowns always read as
- * intended. Swap this for `new Date()` to run against the real calendar.
+ * Today at local midnight, used for overdue checks, due-soon windows and
+ * billing countdowns. The server stamps the dates it stores (see
+ * `server/src/domain/activity.ts`); this is only for display maths, so the two
+ * agree as long as the browser's date is correct.
  */
-export const TODAY = new Date('2026-08-06T00:00:00');
+export const TODAY = (() => {
+  const now = new Date();
+  return new Date(now.getFullYear(), now.getMonth(), now.getDate());
+})();
 
 export function uid(prefix: string): string {
   return prefix + '-' + Math.random().toString(36).slice(2, 9);

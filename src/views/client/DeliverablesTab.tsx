@@ -6,20 +6,24 @@ import { Icon, TrashButton } from '../../ds/Icon';
 import { fmtDate } from '../../lib/dates';
 import { isDeliverableOverdue } from '../../lib/invoices';
 import { deliverableStatusColor } from '../../lib/statusColors';
+import { useAccess } from '../../state/access';
 import { useApp } from '../../state/AppState';
 
 const GRID = '2fr 1fr 1fr 1.2fr 40px';
 
 export function DeliverablesTab({ client }: { client: Client }) {
   const { actions } = useApp();
+  const { canWrite } = useAccess();
 
   return (
     <div style={{ marginTop: 20 }}>
-      <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 12 }}>
-        <Button variant="secondary" size="sm" onClick={() => actions.openAddDeliverable(client.id)}>
-          + Add deliverable
-        </Button>
-      </div>
+      {canWrite && (
+        <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 12 }}>
+          <Button variant="secondary" size="sm" onClick={() => actions.openAddDeliverable(client.id)}>
+            + Add deliverable
+          </Button>
+        </div>
+      )}
       <div className="card card--clip">
         <TableHead
           gridTemplateColumns={GRID}
@@ -47,44 +51,52 @@ export function DeliverablesTab({ client }: { client: Client }) {
                   >
                     {d.file.name}
                   </a>
-                  <span
-                    onClick={() => actions.openAttachFile(client.id, d.id, d.file)}
+                  {canWrite && (
+                    <span
+                      onClick={() => actions.openAttachFile(client.id, d.id, d.file)}
+                      style={{
+                        fontSize: 11,
+                        color: 'var(--ink-3)',
+                        cursor: 'pointer',
+                        textDecoration: 'underline',
+                      }}
+                    >
+                      edit
+                    </span>
+                  )}
+                </div>
+              ) : (
+                canWrite && (
+                  <div
+                    onClick={() => actions.openAttachFile(client.id, d.id, null)}
                     style={{
-                      fontSize: 11,
+                      fontSize: 12,
                       color: 'var(--ink-3)',
+                      marginTop: 6,
                       cursor: 'pointer',
                       textDecoration: 'underline',
                     }}
                   >
-                    edit
-                  </span>
-                </div>
-              ) : (
-                <div
-                  onClick={() => actions.openAttachFile(client.id, d.id, null)}
-                  style={{
-                    fontSize: 12,
-                    color: 'var(--ink-3)',
-                    marginTop: 6,
-                    cursor: 'pointer',
-                    textDecoration: 'underline',
-                  }}
-                >
-                  + Attach delivered file
-                </div>
+                    + Attach delivered file
+                  </div>
+                )
               )}
             </div>
             <span>{d.owner}</span>
             <span>{fmtDate(d.dueDate)}</span>
             {/* Clicking the status advances it: Not started → In progress → Done. */}
             <span
-              style={{ display: 'flex', gap: 6, alignItems: 'center', cursor: 'pointer' }}
-              onClick={() => actions.cycleDeliverable(client.id, d.id)}
+              style={{ display: 'flex', gap: 6, alignItems: 'center', cursor: canWrite ? 'pointer' : 'default' }}
+              onClick={canWrite ? () => actions.cycleDeliverable(client.id, d.id) : undefined}
             >
               <Chip color={deliverableStatusColor(d.status)}>{d.status}</Chip>
               {isDeliverableOverdue(d) && <Chip color="red">Overdue</Chip>}
             </span>
-            <TrashButton onClick={() => actions.removeItem('deliverables', client.id, d.id)} />
+            {canWrite ? (
+              <TrashButton onClick={() => actions.removeItem('deliverables', client.id, d.id)} />
+            ) : (
+              <span />
+            )}
           </div>
         ))}
         {client.deliverables.length === 0 && <EmptyRow>No deliverables tracked yet.</EmptyRow>}
