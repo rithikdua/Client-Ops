@@ -214,8 +214,18 @@ export function TeammateForm() {
   return (
     <>
       <TextField label="Name" k="name" />
+      <TextField label="Work email" k="email" placeholder="name@phot.ai" />
       <TextField label="Role" k="role" placeholder="Account Manager" />
       <SelectField label="Permission" k="permission" options={PERMISSION_OPTIONS} />
+      <div>
+        <TextField label="Temporary password" k="password" type="password" />
+        <div className="field-hint">
+          At least 8 characters. Share it with them and have them change it after signing in.
+        </div>
+      </div>
+      <div className="field-hint">
+        Viewers can read everything they have access to but cannot make changes.
+      </div>
     </>
   );
 }
@@ -369,7 +379,7 @@ export function TaskForm({ ticketKey }: { ticketKey: string }) {
                   whiteSpace: 'nowrap',
                 }}
               >
-                {attachmentLabel(url, 'File attached')}
+                {attachmentLabel(url)}
               </span>
               <span
                 onClick={() => actions.removeTaskAttachment(i)}

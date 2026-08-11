@@ -15,6 +15,7 @@ import {
 } from '../../lib/invoices';
 import { fmtMoney } from '../../lib/money';
 import { chipDotColor, invoiceStatusColor } from '../../lib/statusColors';
+import { useAccess } from '../../state/access';
 import { useApp } from '../../state/AppState';
 
 const GRID = '10px 1.2fr 1.3fr 0.9fr 0.9fr 0.9fr 36px';
@@ -22,6 +23,7 @@ const PAYMENT_GRID = '1fr 1fr 1fr 1fr 24px';
 
 export function InvoicesTab({ client }: { client: Client }) {
   const { state, actions } = useApp();
+  const { canWrite } = useAccess();
   const currency = client.currency;
 
   const baseBilled = client.invoices.reduce((a, i) => a + (i.baseAmount ?? i.amount), 0);
@@ -66,11 +68,13 @@ export function InvoicesTab({ client }: { client: Client }) {
         </div>
       </div>
 
-      <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 12 }}>
-        <Button variant="secondary" size="sm" onClick={() => actions.openAddInvoice(client.id)}>
-          + Add invoice
-        </Button>
-      </div>
+      {canWrite && (
+        <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 12 }}>
+          <Button variant="secondary" size="sm" onClick={() => actions.openAddInvoice(client.id)}>
+            + Add invoice
+          </Button>
+        </div>
+      )}
 
       {/* Left unclipped so the per-row action menu can overflow the card. */}
       <div className="card">
@@ -157,30 +161,32 @@ export function InvoicesTab({ client }: { client: Client }) {
                 <span>
                   <Chip color={invoiceStatusColor(inv)}>{statusLabel}</Chip>
                 </span>
-                <RowMenu
-                  wide
-                  open={state.invoiceMenuOpenId === inv.id}
-                  onToggle={() => actions.toggleInvoiceMenu(inv.id)}
-                >
-                  {canMarkPaid && (
-                    <>
-                      <RowMenuItem onClick={() => actions.openLogPayment(client.id, inv.id, balance)}>
-                        Log a payment
-                      </RowMenuItem>
-                      <RowMenuItem onClick={() => actions.markInvoicePaid(client.id, inv.id)}>
-                        Mark fully paid
-                      </RowMenuItem>
-                    </>
-                  )}
-                  <RowMenuItem
-                    onClick={() => actions.openAttachInvoiceFile(client.id, inv.id, inv.file)}
+                {canWrite ? (
+                  <RowMenu
+                    wide
+                    open={state.invoiceMenuOpenId === inv.id}
+                    onToggle={() => actions.toggleInvoiceMenu(inv.id)}
                   >
-                    {inv.file ? 'Edit attached file' : 'Attach file'}
-                  </RowMenuItem>
-                  <RowMenuItem danger onClick={() => actions.removeItem('invoices', client.id, inv.id)}>
-                    Delete invoice
-                  </RowMenuItem>
-                </RowMenu>
+                    {canMarkPaid && (
+                      <>
+                        <RowMenuItem onClick={() => actions.openLogPayment(client.id, inv.id, balance)}>
+                          Log a payment
+                        </RowMenuItem>
+                        <RowMenuItem onClick={() => actions.markInvoicePaid(client.id, inv.id)}>
+                          Mark fully paid
+                        </RowMenuItem>
+                      </>
+                    )}
+                    <RowMenuItem onClick={() => actions.openAttachInvoiceFile(client.id, inv.id, inv.file)}>
+                      {inv.file ? 'Edit attached file' : 'Attach file'}
+                    </RowMenuItem>
+                    <RowMenuItem danger onClick={() => actions.removeItem('invoices', client.id, inv.id)}>
+                      Delete invoice
+                    </RowMenuItem>
+                  </RowMenu>
+                ) : (
+                  <span />
+                )}
               </div>
 
               {expanded && (
@@ -213,7 +219,7 @@ export function InvoicesTab({ client }: { client: Client }) {
                           </span>
                         </div>
                       </div>
-                      {canMarkPaid && (
+                      {canMarkPaid && canWrite && (
                         <div
                           onClick={() => actions.openLogPayment(client.id, inv.id, balance)}
                           style={{
@@ -269,14 +275,18 @@ export function InvoicesTab({ client }: { client: Client }) {
                               {p.tds > 0 ? fmtMoney(p.tds, currency) : '—'}
                             </span>
                             <span style={{ fontWeight: 600 }}>{fmtMoney(paymentSettled(p), currency)}</span>
-                            <img
-                              src="/assets/icons/trash.svg"
-                              width={13}
-                              height={13}
-                              onClick={() => actions.removePayment(client.id, inv.id, p.id)}
-                              style={{ cursor: 'pointer', opacity: 0.5 }}
-                              alt="Remove"
-                            />
+                            {canWrite ? (
+                              <img
+                                src="/assets/icons/trash.svg"
+                                width={13}
+                                height={13}
+                                onClick={() => actions.removePayment(client.id, inv.id, p.id)}
+                                style={{ cursor: 'pointer', opacity: 0.5 }}
+                                alt="Remove"
+                              />
+                            ) : (
+                              <span />
+                            )}
                           </div>
                         ))}
                       </>

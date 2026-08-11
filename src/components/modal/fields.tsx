@@ -35,7 +35,7 @@ export function TextField({
   label: string;
   k: FormKey;
   placeholder?: string;
-  type?: 'text' | 'number' | 'date';
+  type?: 'text' | 'number' | 'date' | 'password';
   style?: CSSProperties;
 }) {
   const { form, set } = useModalForm();

@@ -10,7 +10,7 @@ import { useFollowUpRows } from '../state/derive';
 
 export function OverviewView() {
   const { state, actions } = useApp();
-  const { showInvoiceStats } = useAccess();
+  const { showInvoiceStats, canWrite } = useAccess();
   const { pending: pendingFollowUps } = useFollowUpRows();
   const clients = state.clients;
 
@@ -70,10 +70,12 @@ export function OverviewView() {
         subtitle="A single view of every B2B account — contracts, invoices, deliverables and activity."
         marginBottom={24}
         action={
-          <button type="button" className="btn btn--primary" onClick={actions.openAddClient}>
-            <img src="/assets/icons/add-square.svg" width={16} height={16} className="icon-invert" alt="" />
-            Add client
-          </button>
+          canWrite && (
+            <button type="button" className="btn btn--primary" onClick={actions.openAddClient}>
+              <img src="/assets/icons/add-square.svg" width={16} height={16} className="icon-invert" alt="" />
+              Add client
+            </button>
+          )
         }
       />
 

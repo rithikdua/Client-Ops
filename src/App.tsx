@@ -9,11 +9,33 @@ import { DeliverablesView } from './views/DeliverablesView';
 import { DocumentsView } from './views/DocumentsView';
 import { FollowUpsView } from './views/FollowUpsView';
 import { InvoicesView } from './views/InvoicesView';
+import { LoginView } from './views/LoginView';
 import { OverviewView } from './views/OverviewView';
 import { TeamView } from './views/TeamView';
 
 export function App() {
-  const { state } = useApp();
+  const { state, actions } = useApp();
+
+  if (state.status === 'loading') {
+    return (
+      <div
+        style={{
+          minHeight: '100vh',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          color: 'var(--ink-3)',
+          fontFamily: 'var(--font-ui)',
+          fontSize: 14,
+        }}
+      >
+        Loading workspace…
+      </div>
+    );
+  }
+
+  if (state.status === 'signed-out') return <LoginView />;
+
   const selectedClient = state.clients.find((c) => c.id === state.selectedId);
 
   return (
@@ -26,6 +48,32 @@ export function App() {
       <Sidebar />
       <div className="content">
         <PreviewBanner />
+        {state.error && (
+          <div
+            style={{
+              position: 'sticky',
+              top: 0,
+              zIndex: 6,
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              gap: 12,
+              padding: '10px 20px',
+              background: '#FEE4E0',
+              borderBottom: '1px solid var(--danger)',
+              color: '#B3200B',
+              fontSize: 13,
+            }}
+          >
+            <span>{state.error}</span>
+            <span
+              onClick={actions.dismissError}
+              style={{ cursor: 'pointer', fontWeight: 600, whiteSpace: 'nowrap' }}
+            >
+              Dismiss
+            </span>
+          </div>
+        )}
         {state.view === 'overview' && <OverviewView />}
         {state.view === 'clients' && <ClientsView />}
         {state.view === 'invoices' && <InvoicesView />}

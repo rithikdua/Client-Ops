@@ -2,38 +2,30 @@ import {
   createContext,
   useCallback,
   useContext,
+  useEffect,
   useMemo,
+  useRef,
   useState,
   type ChangeEvent,
   type ReactNode,
 } from 'react';
+import { api, ApiError, type Me, type Snapshot } from '../api/client';
 import { ALL_ACCESS, DELIVERABLE_CYCLE } from '../data/options';
-import { seedClients, seedFollowUps, TEAM_SEED } from '../data/seed';
 import type {
   Access,
   AttachedFile,
-  BillingCycle,
   Client,
   ClientTabId,
-  CurrencyCode,
-  DeliverableStatus,
-  DocumentType,
   FollowUp,
   Health,
-  MandateType,
-  PaymentTerms,
-  Permission,
   SectionKey,
-  Stage,
   Task,
-  TaskPriority,
   TaskStatus,
   Teammate,
   View,
 } from '../data/types';
-import { addDays, parseISO, toISO, todayISO, uid, type InvoicePeriod } from '../lib/dates';
-import { invoiceBalance } from '../lib/invoices';
-import { gstBreakdown } from '../lib/money';
+import { addDays, parseISO, toISO, todayISO, type InvoicePeriod } from '../lib/dates';
+import { minorToInput } from '../lib/money';
 import type { FormKey, ModalForm, ModalState } from './modal';
 
 export type SortBy = 'name' | 'value' | 'health';
@@ -42,15 +34,24 @@ export type InvoiceStatusFilter = 'all' | 'Paid' | 'Partially Paid' | 'Pending' 
 export type FollowUpStatusFilter = 'pending' | 'done' | 'all';
 export type FollowUpSubTab = 'queue' | 'phonebook';
 
+export type LoadStatus = 'loading' | 'signed-out' | 'ready';
+
 export interface AppStateShape {
+  /** Server-owned data. Empty until the first snapshot arrives. */
+  me: Me | null;
   clients: Client[];
   team: Teammate[];
   followUps: FollowUp[];
+
+  status: LoadStatus;
+  /** A mutation is in flight. */
+  busy: boolean;
+  /** Last error, surfaced as a dismissible banner. */
+  error: string | null;
+
   view: View;
   selectedId: string | null;
   clientTabId: ClientTabId;
-  /** Teammate whose access is being previewed, or null for full access. */
-  previewAsId: string | null;
   search: string;
   healthFilter: Health | 'all';
   sortBy: SortBy;
@@ -71,13 +72,16 @@ export interface AppStateShape {
 }
 
 const initialState = (): AppStateShape => ({
-  clients: seedClients(),
-  team: TEAM_SEED,
-  followUps: seedFollowUps(),
+  me: null,
+  clients: [],
+  team: [],
+  followUps: [],
+  status: 'loading',
+  busy: false,
+  error: null,
   view: 'overview',
   selectedId: null,
   clientTabId: 'overview',
-  previewAsId: null,
   search: '',
   healthFilter: 'all',
   sortBy: 'name',
@@ -100,6 +104,11 @@ const initialState = (): AppStateShape => ({
 type ListName = 'contacts' | 'invoices' | 'deliverables' | 'documents';
 
 export interface AppActions {
+  login: (email: string, password: string) => Promise<void>;
+  logout: () => void;
+  reload: () => void;
+  dismissError: () => void;
+
   goTo: (view: View) => void;
   goClients: () => void;
   openClient: (id: string) => void;
@@ -132,7 +141,7 @@ export interface AppActions {
   openAddContact: (clientId: string) => void;
   openAddContactGlobal: () => void;
   openAddInvoice: (clientId: string) => void;
-  openLogPayment: (clientId: string, invId: string, balance: number) => void;
+  openLogPayment: (clientId: string, invId: string, balanceMinor: number) => void;
   openAttachInvoiceFile: (clientId: string, invId: string, existing?: AttachedFile | null) => void;
   openAddDeliverable: (clientId: string) => void;
   openAttachFile: (clientId: string, delId: string, existing?: AttachedFile | null) => void;
@@ -172,13 +181,15 @@ export interface AppActions {
 
 const AppStateContext = createContext<{ state: AppStateShape; actions: AppActions } | null>(null);
 
-/** Builds `{ name, url }` from the link + display-name pair, or null if empty. */
-function fileFromForm(f: ModalForm): AttachedFile | null {
-  return f.fileUrl || f.fileName ? { name: f.fileName || f.fileUrl || '', url: f.fileUrl || '' } : null;
+function fileFields(f: ModalForm) {
+  return { fileName: f.fileName ?? '', fileUrl: f.fileUrl ?? '' };
 }
 
 export function AppStateProvider({ children }: { children: ReactNode }) {
   const [state, setState] = useState<AppStateShape>(initialState);
+  // Actions read the latest state without being re-created on every change.
+  const stateRef = useRef(state);
+  stateRef.current = state;
 
   const patch = useCallback(
     (updater: Partial<AppStateShape> | ((s: AppStateShape) => Partial<AppStateShape>)) => {
@@ -187,30 +198,104 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
     [],
   );
 
+  const applySnapshot = useCallback(
+    (snapshot: Snapshot, extra?: Partial<AppStateShape>) => {
+      patch({
+        me: snapshot.me,
+        clients: snapshot.clients,
+        team: snapshot.team,
+        followUps: snapshot.followUps,
+        status: 'ready',
+        busy: false,
+        error: null,
+        ...extra,
+      });
+    },
+    [patch],
+  );
+
+  /**
+   * Runs a mutation: marks the app busy, applies the returned snapshot, and
+   * turns failures into a visible message instead of a silent no-op.
+   */
+  const run = useCallback(
+    async (
+      fn: () => Promise<Snapshot>,
+      opts: { onSuccess?: Partial<AppStateShape>; requiresWrite?: boolean } = {},
+    ) => {
+      const me = stateRef.current.me;
+      if (opts.requiresWrite !== false && me && !me.canWrite) {
+        patch({ error: 'Your account is read-only, so nothing was changed.' });
+        return;
+      }
+      patch({ busy: true, error: null });
+      try {
+        applySnapshot(await fn(), opts.onSuccess);
+      } catch (err) {
+        if (err instanceof ApiError && err.isUnauthorized) {
+          patch({ status: 'signed-out', me: null, clients: [], team: [], followUps: [], busy: false });
+          return;
+        }
+        const detail =
+          err instanceof ApiError && err.details?.length
+            ? ` (${err.details.map((d) => d.message).join(' ')})`
+            : '';
+        patch({ busy: false, error: (err instanceof Error ? err.message : 'Something went wrong.') + detail });
+      }
+    },
+    [applySnapshot, patch],
+  );
+
+  // Resume an existing session on load.
+  useEffect(() => {
+    let cancelled = false;
+    api
+      .session()
+      .then((snapshot) => {
+        if (!cancelled) applySnapshot(snapshot);
+      })
+      .catch((err) => {
+        if (cancelled) return;
+        if (err instanceof ApiError && err.isUnauthorized) {
+          patch({ status: 'signed-out' });
+        } else {
+          patch({ status: 'signed-out', error: err instanceof Error ? err.message : 'Cannot reach the API.' });
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [applySnapshot, patch]);
+
   const actions = useMemo<AppActions>(() => {
-    const firstTeamName = (s: AppStateShape) => (s.team[0] ? s.team[0].name : '');
-
-    /** Prepends a read-only system entry to a client's activity feed. */
-    const logActivity = (clients: Client[], clientId: string, note: string, author: string): Client[] =>
-      clients.map((c) =>
-        c.id === clientId
-          ? {
-              ...c,
-              activity: [
-                { id: uid('act'), date: todayISO(), author, note, kind: 'system' as const },
-                ...c.activity,
-              ],
-            }
-          : c,
-      );
-
-    const mapClient = (s: AppStateShape, clientId: string, fn: (c: Client) => Client): Client[] =>
-      s.clients.map((c) => (c.id === clientId ? fn(c) : c));
-
-    const openModal = (modal: ModalState, extra?: Partial<AppStateShape>) =>
-      patch({ modal, ...extra });
+    const firstTeamName = () => {
+      const s = stateRef.current;
+      return s.me?.name ?? (s.team[0] ? s.team[0].name : '');
+    };
+    const clientById = (id: string | undefined) =>
+      stateRef.current.clients.find((c) => c.id === id);
+    const openModal = (modal: ModalState, extra?: Partial<AppStateShape>) => patch({ modal, ...extra });
 
     return {
+      login: async (email, password) => {
+        patch({ busy: true, error: null });
+        try {
+          applySnapshot(await api.login(email, password), { view: 'overview', selectedId: null });
+        } catch (err) {
+          patch({ busy: false, error: err instanceof Error ? err.message : 'Sign-in failed.' });
+          throw err;
+        }
+      },
+      logout: () => {
+        void api.logout().finally(() => {
+          setState({ ...initialState(), status: 'signed-out' });
+        });
+      },
+      reload: () => {
+        void run(() => api.session(), { requiresWrite: false });
+      },
+      dismissError: () => patch({ error: null }),
+
       goTo: (view) => patch({ view, selectedId: null }),
       goClients: () => patch({ view: 'clients' }),
       openClient: (id) => patch({ view: 'client', selectedId: id, clientTabId: 'overview' }),
@@ -231,9 +316,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       setPhonebookSearch: (phonebookSearch) => patch({ phonebookSearch }),
 
       toggleInvoiceExpand: (invId) =>
-        patch((s) => ({
-          expandedInvoices: { ...s.expandedInvoices, [invId]: !s.expandedInvoices[invId] },
-        })),
+        patch((s) => ({ expandedInvoices: { ...s.expandedInvoices, [invId]: !s.expandedInvoices[invId] } })),
       toggleInvoiceMenu: (invId) =>
         patch((s) => ({ invoiceMenuOpenId: s.invoiceMenuOpenId === invId ? null : invId })),
       toggleFollowUpExpand: (id) =>
@@ -241,58 +324,63 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       toggleFollowUpMenu: (id) =>
         patch((s) => ({ followUpMenuOpenId: s.followUpMenuOpenId === id ? null : id })),
 
-      // Previewing lands on the first section the teammate can actually open.
-      startPreview: (teammateId) =>
-        patch((s) => {
-          const member = s.team.find((t) => t.id === teammateId);
-          const access: Access = { ...ALL_ACCESS, ...(member?.access ?? {}) };
-          const nextView = (['overview', 'clients', 'invoices', 'deliverables', 'documents', 'team', 'followups'] as const).find(
-            (v) => access[v],
-          );
-          return { previewAsId: teammateId, modal: null, view: nextView ?? 'overview', selectedId: null };
-        }),
-      exitPreview: () => patch({ previewAsId: null }),
+      // The server records the preview on the session, so it lands on whichever
+      // section that teammate is actually allowed to open.
+      startPreview: (teammateId) => {
+        void run(
+          async () => {
+            const snapshot = await api.startPreview(teammateId);
+            const first = (
+              ['overview', 'clients', 'invoices', 'deliverables', 'documents', 'team', 'followups'] as const
+            ).find((v) => snapshot.me.access[v]);
+            patch({ view: first ?? 'overview', selectedId: null, modal: null });
+            return snapshot;
+          },
+          { requiresWrite: false },
+        );
+      },
+      exitPreview: () => {
+        void run(() => api.exitPreview(), { requiresWrite: false });
+      },
 
       openAddClient: () =>
-        patch((s) =>
-          ({
-            modal: {
-              type: 'client',
-              editing: false,
-              form: {
-                name: '',
-                industry: '',
-                owner: firstTeamName(s),
-                health: 'Active',
-                stage: 'Onboarding',
-                billingCycle: 'Monthly',
-                startDate: todayISO(),
-                onboardingDate: todayISO(),
-                currency: 'INR',
-                contractEndDate: '',
-                paymentTerms: 'Net 30',
-                website: '',
-                notes: '',
-                legalName: '',
-                gstin: '',
-                natureOfBusiness: '',
-                cityTier: '',
-                mandateType: 'Pilot',
-                mandateOther: '',
-                scopeOfWork: '',
-                baseAmount: '',
-                gstPercent: '18',
-                gstMode: 'excluded',
-                contactName: '',
-                contactRole: '',
-                contactEmail: '',
-                contactPhone: '',
-                initialCommitment: '',
-                initialCommitmentDue: '',
-              },
+        patch({
+          modal: {
+            type: 'client',
+            editing: false,
+            form: {
+              name: '',
+              industry: '',
+              owner: firstTeamName(),
+              health: 'Active',
+              stage: 'Onboarding',
+              billingCycle: 'Monthly',
+              startDate: todayISO(),
+              onboardingDate: todayISO(),
+              currency: 'INR',
+              contractEndDate: '',
+              paymentTerms: 'Net 30',
+              website: '',
+              notes: '',
+              legalName: '',
+              gstin: '',
+              natureOfBusiness: '',
+              cityTier: '',
+              mandateType: 'Pilot',
+              mandateOther: '',
+              scopeOfWork: '',
+              baseAmount: '',
+              gstPercent: '18',
+              gstMode: 'excluded',
+              contactName: '',
+              contactRole: '',
+              contactEmail: '',
+              contactPhone: '',
+              initialCommitment: '',
+              initialCommitmentDue: '',
             },
-          }) as Partial<AppStateShape>,
-        ),
+          },
+        }),
 
       openEditClient: (client) =>
         openModal({
@@ -320,8 +408,8 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
             mandateType: client.mandateType || 'Pilot',
             mandateOther: client.mandateOther || '',
             scopeOfWork: client.scopeOfWork || '',
-            baseAmount: String(client.baseAmount ?? client.contractValue ?? ''),
-            gstPercent: String(client.gstPercent ?? '18'),
+            baseAmount: minorToInput(client.baseAmount ?? client.contractValue),
+            gstPercent: String(client.gstPercent ?? 18),
             gstMode: client.gstMode || 'excluded',
           },
         }),
@@ -331,35 +419,36 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       openAddContactGlobal: () =>
         openModal({ type: 'contact', clientId: '', form: { clientId: '', name: '', role: '', email: '', phone: '' } }),
 
-      openAddInvoice: (clientId) =>
-        patch((s) => {
-          const c = s.clients.find((x) => x.id === clientId);
-          const n = (c ? c.invoices.length : 0) + 1;
-          return {
-            modal: {
-              type: 'invoice',
-              clientId,
-              form: {
-                number: 'INV-2026-' + String(500 + n).padStart(4, '0'),
-                baseAmount: '',
-                gstPercent: String(c?.gstPercent ?? '18'),
-                gstMode: 'excluded',
-                issueDate: todayISO(),
-                dueDate: '',
-                fileName: '',
-                fileUrl: '',
-              },
-            },
-          };
-        }),
+      openAddInvoice: (clientId) => {
+        const c = clientById(clientId);
+        const n = (c ? c.invoices.length : 0) + 1;
+        openModal({
+          type: 'invoice',
+          clientId,
+          form: {
+            number: 'INV-2026-' + String(500 + n).padStart(4, '0'),
+            baseAmount: '',
+            gstPercent: String(c?.gstPercent ?? 18),
+            gstMode: 'excluded',
+            issueDate: todayISO(),
+            dueDate: '',
+            fileName: '',
+            fileUrl: '',
+          },
+        });
+      },
 
-      openLogPayment: (clientId, invId, balance) =>
+      openLogPayment: (clientId, invId, balanceMinor) =>
         openModal(
           {
             type: 'logPayment',
             clientId,
             invId,
-            form: { bankAmount: balance > 0 ? String(balance) : '', tds: '', date: todayISO() },
+            form: {
+              bankAmount: balanceMinor > 0 ? minorToInput(balanceMinor) : '',
+              tds: '',
+              date: todayISO(),
+            },
           },
           { invoiceMenuOpenId: null },
         ),
@@ -377,21 +466,19 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
         ),
 
       openAddDeliverable: (clientId) =>
-        patch((s) => ({
-          modal: {
-            type: 'deliverable',
-            clientId,
-            form: {
-              title: '',
-              description: '',
-              owner: firstTeamName(s),
-              dueDate: '',
-              status: 'Not started',
-              fileName: '',
-              fileUrl: '',
-            },
+        openModal({
+          type: 'deliverable',
+          clientId,
+          form: {
+            title: '',
+            description: '',
+            owner: firstTeamName(),
+            dueDate: '',
+            status: 'Not started',
+            fileName: '',
+            fileUrl: '',
           },
-        })),
+        }),
 
       openAttachFile: (clientId, delId, existing) =>
         openModal({
@@ -403,21 +490,15 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
         }),
 
       openAddDocument: (clientId) =>
-        openModal({
-          type: 'document',
-          clientId,
-          form: { name: '', type: 'Contract', fileUrl: '', source: 'us' },
-        }),
+        openModal({ type: 'document', clientId, form: { name: '', type: 'Contract', fileUrl: '', source: 'us' } }),
 
       openAddActivity: (clientId) =>
-        patch((s) => ({
-          modal: { type: 'activity', clientId, form: { note: '', author: firstTeamName(s) } },
-        })),
+        openModal({ type: 'activity', clientId, form: { note: '', author: firstTeamName() } }),
 
       openAddTeammate: () =>
         openModal({
           type: 'teammate',
-          form: { name: '', role: '', permission: 'Editor', access: { ...ALL_ACCESS } },
+          form: { name: '', role: '', email: '', permission: 'Editor', password: '', access: { ...ALL_ACCESS } },
         }),
 
       openManagePermissions: (member) =>
@@ -428,22 +509,20 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
         }),
 
       openAddFollowUp: () =>
-        patch((s) => ({
-          modal: {
-            type: 'followup',
-            editing: false,
-            form: {
-              name: '',
-              companyName: '',
-              email: '',
-              phone: '',
-              relatedClientId: '',
-              reason: '',
-              owner: firstTeamName(s),
-              dueDate: todayISO(),
-            },
+        openModal({
+          type: 'followup',
+          editing: false,
+          form: {
+            name: '',
+            companyName: '',
+            email: '',
+            phone: '',
+            relatedClientId: '',
+            reason: '',
+            owner: firstTeamName(),
+            dueDate: todayISO(),
           },
-        })),
+        }),
 
       openEditFollowUp: (f) =>
         openModal(
@@ -474,45 +553,40 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
         }),
 
       openAddTask: (clientId) =>
-        patch((s) => ({
-          modal: {
-            type: 'task',
-            clientId,
-            form: {
-              title: '',
-              assignee: firstTeamName(s),
-              description: '',
-              status: 'New',
-              priority: 'Medium',
-              dueDate: '',
-              attachments: [],
-              linkInput: '',
-            },
+        openModal({
+          type: 'task',
+          clientId,
+          form: {
+            title: '',
+            assignee: firstTeamName(),
+            description: '',
+            status: 'New',
+            priority: 'Medium',
+            dueDate: '',
+            attachments: [],
+            linkInput: '',
           },
-        })),
+        }),
 
       openEditTask: (clientId, task) =>
-        patch((s) => ({
-          modal: {
-            type: 'task',
-            clientId,
-            editing: true,
-            taskId: task.id,
-            form: {
-              title: task.title,
-              assignee: task.assignee || firstTeamName(s),
-              description: task.description || '',
-              status: task.status || 'New',
-              priority: task.priority || 'Medium',
-              dueDate: task.dueDate || '',
-              attachments: task.attachments || [],
-              linkInput: '',
-            },
+        openModal({
+          type: 'task',
+          clientId,
+          editing: true,
+          taskId: task.id,
+          form: {
+            title: task.title,
+            assignee: task.assignee || firstTeamName(),
+            description: task.description || '',
+            status: task.status || 'New',
+            priority: task.priority || 'Medium',
+            dueDate: task.dueDate || '',
+            attachments: task.attachments || [],
+            linkInput: '',
           },
-        })),
+        }),
 
-      openTaskPreview: (clientId, task) =>
-        openModal({ type: 'taskPreview', clientId, task, form: {} }),
+      openTaskPreview: (clientId, task) => openModal({ type: 'taskPreview', clientId, task, form: {} }),
 
       closeModal: () => patch({ modal: null }),
 
@@ -549,27 +623,25 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
           };
         }),
 
-      // Uploads are inlined as data URLs — there's no file storage behind this.
+      // Files go to the server and come back as a URL to reference.
       handleTaskFileChange: (e) => {
         const file = e.target.files && e.target.files[0];
-        if (!file) return;
-        const reader = new FileReader();
-        reader.onload = () =>
-          patch((s) =>
-            s.modal
-              ? {
-                  modal: {
-                    ...s.modal,
-                    form: {
-                      ...s.modal.form,
-                      attachments: [...(s.modal.form.attachments ?? []), String(reader.result)],
-                    },
-                  },
-                }
-              : {},
-          );
-        reader.readAsDataURL(file);
         e.target.value = '';
+        if (!file) return;
+        patch({ busy: true, error: null });
+        api
+          .upload(file)
+          .then(({ url }) =>
+            patch((s) => ({
+              busy: false,
+              modal: s.modal
+                ? { ...s.modal, form: { ...s.modal.form, attachments: [...(s.modal.form.attachments ?? []), url] } }
+                : null,
+            })),
+          )
+          .catch((err) =>
+            patch({ busy: false, error: err instanceof Error ? err.message : 'Upload failed.' }),
+          );
       },
 
       addTaskLink: () =>
@@ -600,481 +672,273 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
             : {},
         ),
 
-      submitModal: () =>
-        patch((s) => {
-          const modal = s.modal;
-          if (!modal) return {};
-          const f = modal.form;
-          const author = firstTeamName(s);
+      submitModal: () => {
+        const modal = stateRef.current.modal;
+        if (!modal) return;
+        const f = modal.form;
+        const closed = { modal: null };
 
-          if (modal.type === 'teammate') {
-            return {
-              team: [
-                ...s.team,
-                {
-                  id: uid('tm'),
-                  name: f.name ?? '',
-                  role: f.role ?? '',
-                  permission: (f.permission as Permission) || 'Editor',
-                  access: f.access ?? { ...ALL_ACCESS },
-                },
-              ],
-              modal: null,
-            };
-          }
-
-          if (modal.type === 'permissions') {
-            return {
-              team: s.team.map((t) =>
-                t.id === modal.teammateId ? { ...t, access: f.access ?? { ...ALL_ACCESS } } : t,
-              ),
-              modal: null,
-            };
-          }
-
-          if (modal.type === 'task') {
-            const fields = {
-              title: f.title ?? '',
-              assignee: f.assignee || author,
-              description: f.description ?? '',
-              status: (f.status as TaskStatus) || 'New',
-              priority: (f.priority as TaskPriority) || 'Medium',
-              dueDate: f.dueDate ?? '',
-              attachments: f.attachments ?? [],
-            };
-            if (modal.editing) {
-              return {
-                clients: mapClient(s, modal.clientId!, (c) => ({
-                  ...c,
-                  tasks: c.tasks.map((t) => (t.id === modal.taskId ? { ...t, ...fields } : t)),
-                })),
-                modal: null,
-              };
-            }
-            return {
-              clients: mapClient(s, modal.clientId!, (c) => ({
-                ...c,
-                tasks: [...(c.tasks ?? []), { id: uid('tsk'), ...fields }],
-              })),
-              modal: null,
-            };
-          }
-
-          if (modal.type === 'logPayment') {
-            const bank = Number(f.bankAmount) || 0;
-            const tds = Number(f.tds) || 0;
-            if (bank <= 0 && tds <= 0) return { modal: null };
-            let clients = mapClient(s, modal.clientId!, (c) => ({
-              ...c,
-              invoices: c.invoices.map((i) =>
-                i.id === modal.invId
-                  ? {
-                      ...i,
-                      payments: [
-                        ...(i.payments ?? []),
-                        { id: uid('pay'), bankAmount: bank, tds, date: f.date || todayISO() },
-                      ],
-                    }
-                  : i,
-              ),
-            }));
-            const inv = s.clients.find((c) => c.id === modal.clientId)?.invoices.find((i) => i.id === modal.invId);
-            if (inv) clients = logActivity(clients, modal.clientId!, 'Payment logged for invoice ' + inv.number, author);
-            return { clients, modal: null };
-          }
-
-          if (modal.type === 'completeFollowUp') {
-            const entry = f.note ? [{ id: uid('cl'), date: todayISO(), note: f.note }] : [];
-            const done = f.action === 'done';
-            return {
-              followUps: s.followUps.map((fu) =>
-                fu.id === modal.followUpId
-                  ? done
-                    ? { ...fu, status: 'Done' as const, log: [...(fu.log ?? []), ...entry] }
-                    : {
-                        ...fu,
-                        status: 'Pending' as const,
-                        dueDate: f.nextDate || fu.dueDate,
-                        log: [...(fu.log ?? []), ...entry],
-                      }
-                  : fu,
-              ),
-              modal: null,
-            };
-          }
-
-          if (modal.type === 'followup') {
-            const fields = {
-              name: f.name ?? '',
-              companyName: f.companyName ?? '',
-              email: f.email ?? '',
-              phone: f.phone ?? '',
-              relatedClientId: f.relatedClientId ?? '',
-              reason: f.reason ?? '',
-              owner: f.owner || author,
-              dueDate: f.dueDate || todayISO(),
-            };
-            if (modal.editing) {
-              return {
-                followUps: s.followUps.map((fu) => (fu.id === modal.followUpId ? { ...fu, ...fields } : fu)),
-                modal: null,
-              };
-            }
-            return {
-              followUps: [...s.followUps, { id: uid('fu'), ...fields, status: 'Pending' as const }],
-              modal: null,
-            };
-          }
-
-          let next = s.clients;
-
-          if (modal.type === 'client') {
-            const { base, gst, total } = gstBreakdown(
-              Number(f.baseAmount) || 0,
-              Number(f.gstPercent) || 0,
-              f.gstMode === 'included' ? 'included' : 'excluded',
-            );
-            const shared = {
+        switch (modal.type) {
+          case 'client': {
+            const body: Record<string, unknown> = {
+              name: f.name || 'Untitled client',
               industry: f.industry ?? '',
               owner: f.owner ?? '',
-              health: (f.health as Health) || 'Active',
-              stage: (f.stage as Stage) || 'Onboarding',
-              contractValue: total,
-              baseAmount: base,
+              health: f.health ?? 'Active',
+              stage: f.stage ?? 'Onboarding',
+              currency: f.currency ?? 'INR',
+              billingCycle: f.billingCycle ?? 'Monthly',
+              baseAmount: Number(f.baseAmount) || 0,
               gstPercent: Number(f.gstPercent) || 0,
-              gstAmount: gst,
-              gstMode: f.gstMode === 'included' ? ('included' as const) : ('excluded' as const),
-              currency: (f.currency as CurrencyCode) || 'INR',
-              billingCycle: (f.billingCycle as BillingCycle) || 'Monthly',
-              contractEndDate: f.contractEndDate ?? '',
-              paymentTerms: (f.paymentTerms as PaymentTerms) || 'Net 30',
+              gstMode: f.gstMode === 'included' ? 'included' : 'excluded',
+              startDate: f.startDate || todayISO(),
+              onboardingDate: f.onboardingDate || '',
+              contractEndDate: f.contractEndDate || '',
+              paymentTerms: f.paymentTerms ?? 'Net 30',
               website: f.website ?? '',
               notes: f.notes ?? '',
               legalName: f.legalName ?? '',
               gstin: f.gstin ?? '',
               natureOfBusiness: f.natureOfBusiness ?? '',
               cityTier: f.cityTier ?? '',
-              mandateType: (f.mandateType as MandateType) || 'Pilot',
-              mandateOther: f.mandateType === 'Other' ? (f.mandateOther ?? '') : '',
+              mandateType: f.mandateType ?? 'Pilot',
+              mandateOther: f.mandateOther ?? '',
               scopeOfWork: f.scopeOfWork ?? '',
             };
             if (modal.editing) {
-              next = next.map((c) =>
-                c.id === modal.clientId
-                  ? {
-                      ...c,
-                      ...shared,
-                      name: f.name || c.name,
-                      startDate: f.startDate || c.startDate,
-                      onboardingDate: f.onboardingDate || c.onboardingDate,
-                    }
-                  : c,
-              );
-              next = logActivity(next, modal.clientId!, 'Client details updated', author);
+              void run(() => api.updateClient(modal.clientId!, body), { onSuccess: closed });
             } else {
-              // A new client can be created with its first contact and its
-              // first commitment in one pass.
-              const contacts = f.contactName
-                ? [
-                    {
-                      id: uid('ct'),
-                      name: f.contactName,
-                      role: f.contactRole ?? '',
-                      email: f.contactEmail ?? '',
-                      phone: f.contactPhone ?? '',
-                    },
-                  ]
-                : [];
-              const deliverables = f.initialCommitment
-                ? [
-                    {
-                      id: uid('del'),
-                      title: f.initialCommitment,
-                      description: '',
-                      owner: f.owner || author,
-                      dueDate: f.initialCommitmentDue || todayISO(),
-                      status: 'Not started' as DeliverableStatus,
-                    },
-                  ]
-                : [];
-              next = [
-                ...next,
-                {
-                  id: uid('c'),
-                  ...shared,
-                  name: f.name || 'Untitled client',
-                  startDate: f.startDate || todayISO(),
-                  onboardingDate: f.onboardingDate || todayISO(),
-                  contacts,
-                  invoices: [],
-                  deliverables,
-                  documents: [],
-                  activity: [],
-                  tasks: [],
-                },
-              ];
+              if (f.contactName) {
+                body.contact = {
+                  name: f.contactName,
+                  role: f.contactRole ?? '',
+                  email: f.contactEmail ?? '',
+                  phone: f.contactPhone ?? '',
+                };
+              }
+              if (f.initialCommitment) {
+                body.initialCommitment = {
+                  title: f.initialCommitment,
+                  dueDate: f.initialCommitmentDue || '',
+                };
+              }
+              void run(() => api.createClient(body), { onSuccess: closed });
             }
-          } else if (modal.type === 'contact') {
-            const targetId = f.clientId || modal.clientId || '';
+            return;
+          }
+          case 'contact': {
             const contact = {
-              id: uid('ct'),
               name: f.name ?? '',
               role: f.role ?? '',
               email: f.email ?? '',
               phone: f.phone ?? '',
             };
-            if (targetId === '__new__') {
-              next = [
-                ...next,
-                {
-                  id: uid('c'),
-                  name: f.newClientName || 'Untitled client',
-                  industry: '',
-                  owner: author,
-                  health: 'Active',
-                  stage: 'Onboarding',
-                  contractValue: 0,
-                  billingCycle: 'Monthly',
-                  startDate: todayISO(),
-                  currency: 'INR',
-                  contacts: [contact],
-                  invoices: [],
-                  deliverables: [],
-                  documents: [],
-                  activity: [],
-                  tasks: [],
-                },
-              ];
+            if (modal.clientId) {
+              void run(() => api.addContact(modal.clientId!, contact), { onSuccess: closed });
             } else {
-              next = next.map((c) => (c.id === targetId ? { ...c, contacts: [...c.contacts, contact] } : c));
-              next = logActivity(next, targetId, 'Contact "' + contact.name + '" added', author);
+              void run(
+                () =>
+                  api.addContactAnywhere({
+                    ...contact,
+                    clientId: f.clientId ?? '',
+                    newClientName: f.newClientName ?? '',
+                  }),
+                { onSuccess: closed },
+              );
             }
-          } else if (modal.type === 'invoice') {
-            const { base, gst, total } = gstBreakdown(
-              Number(f.baseAmount) || 0,
-              Number(f.gstPercent) || 0,
-              f.gstMode === 'included' ? 'included' : 'excluded',
-            );
-            next = next.map((c) =>
-              c.id === modal.clientId
-                ? {
-                    ...c,
-                    invoices: [
-                      ...c.invoices,
-                      {
-                        id: uid('inv'),
-                        number: f.number ?? '',
-                        amount: total,
-                        baseAmount: base,
-                        gstPercent: Number(f.gstPercent) || 0,
-                        gstAmount: gst,
-                        gstMode: f.gstMode === 'included' ? ('included' as const) : ('excluded' as const),
-                        issueDate: f.issueDate || todayISO(),
-                        dueDate: f.dueDate || todayISO(),
-                        payments: [],
-                        file: fileFromForm(f),
-                      },
-                    ],
-                  }
-                : c,
-            );
-            next = logActivity(next, modal.clientId!, 'Invoice ' + (f.number ?? '') + ' added', author);
-          } else if (modal.type === 'attachInvoiceFile') {
-            next = next.map((c) =>
-              c.id === modal.clientId
-                ? {
-                    ...c,
-                    invoices: c.invoices.map((i) => (i.id === modal.invId ? { ...i, file: fileFromForm(f) } : i)),
-                  }
-                : c,
-            );
-          } else if (modal.type === 'deliverable') {
-            next = next.map((c) =>
-              c.id === modal.clientId
-                ? {
-                    ...c,
-                    deliverables: [
-                      ...c.deliverables,
-                      {
-                        id: uid('del'),
-                        title: f.title ?? '',
-                        description: f.description ?? '',
-                        owner: f.owner || author,
-                        dueDate: f.dueDate || todayISO(),
-                        status: (f.status as DeliverableStatus) || 'Not started',
-                        file: fileFromForm(f),
-                      },
-                    ],
-                  }
-                : c,
-            );
-            next = logActivity(next, modal.clientId!, 'Deliverable "' + (f.title ?? '') + '" added', author);
-          } else if (modal.type === 'document') {
-            next = next.map((c) =>
-              c.id === modal.clientId
-                ? {
-                    ...c,
-                    documents: [
-                      ...c.documents,
-                      {
-                        id: uid('doc'),
-                        name: f.name ?? '',
-                        type: (f.type as DocumentType) || 'Other',
-                        date: todayISO(),
-                        url: f.fileUrl ?? '',
-                        source: f.source === 'client' ? ('client' as const) : ('us' as const),
-                      },
-                    ],
-                  }
-                : c,
-            );
-            next = logActivity(next, modal.clientId!, 'Document "' + (f.name ?? '') + '" added', author);
-          } else if (modal.type === 'activity') {
-            next = next.map((c) =>
-              c.id === modal.clientId
-                ? {
-                    ...c,
-                    activity: [
-                      {
-                        id: uid('act'),
-                        date: todayISO(),
-                        author: f.author || author,
-                        note: f.note ?? '',
-                        kind: 'note' as const,
-                      },
-                      ...c.activity,
-                    ],
-                  }
-                : c,
-            );
-          } else if (modal.type === 'attachFile') {
-            next = next.map((c) =>
-              c.id === modal.clientId
-                ? {
-                    ...c,
-                    deliverables: c.deliverables.map((d) =>
-                      d.id === modal.delId ? { ...d, file: fileFromForm(f) } : d,
-                    ),
-                  }
-                : c,
-            );
+            return;
           }
-
-          return { clients: next, modal: null };
-        }),
-
-      removeItem: (listName, clientId, itemId) =>
-        patch((s) => ({
-          clients: mapClient(s, clientId, (c) => ({
-            ...c,
-            [listName]: (c[listName] as { id: string }[]).filter((i) => i.id !== itemId),
-          })),
-          invoiceMenuOpenId: null,
-        })),
-
-      removeTeammate: (id) => patch((s) => ({ team: s.team.filter((t) => t.id !== id) })),
-      removeFollowUp: (id) =>
-        patch((s) => ({ followUps: s.followUps.filter((f) => f.id !== id), followUpMenuOpenId: null })),
-      reopenFollowUp: (id) =>
-        patch((s) => ({
-          followUps: s.followUps.map((f) => (f.id === id ? { ...f, status: 'Pending' as const } : f)),
-        })),
-
-      markInvoicePaid: (clientId, invId) =>
-        patch((s) => {
-          const inv = s.clients.find((c) => c.id === clientId)?.invoices.find((i) => i.id === invId);
-          let clients = mapClient(s, clientId, (c) => ({
-            ...c,
-            invoices: c.invoices.map((i) =>
-              i.id === invId
-                ? {
-                    ...i,
-                    payments: [
-                      ...(i.payments ?? []),
-                      { id: uid('pay'), bankAmount: invoiceBalance(i), tds: 0, date: todayISO() },
-                    ],
-                  }
-                : i,
-            ),
-          }));
-          if (inv) {
-            clients = logActivity(clients, clientId, 'Payment logged for invoice ' + inv.number, firstTeamName(s));
-          }
-          return { clients, invoiceMenuOpenId: null };
-        }),
-
-      removePayment: (clientId, invId, paymentId) =>
-        patch((s) => ({
-          clients: mapClient(s, clientId, (c) => ({
-            ...c,
-            invoices: c.invoices.map((i) =>
-              i.id === invId ? { ...i, payments: i.payments.filter((p) => p.id !== paymentId) } : i,
-            ),
-          })),
-        })),
-
-      removeInvoiceFile: (clientId, invId) =>
-        patch((s) => ({
-          clients: mapClient(s, clientId, (c) => ({
-            ...c,
-            invoices: c.invoices.map((i) => (i.id === invId ? { ...i, file: null } : i)),
-          })),
-          modal: null,
-        })),
-
-      removeDeliverableFile: (clientId, delId) =>
-        patch((s) => ({
-          clients: mapClient(s, clientId, (c) => ({
-            ...c,
-            deliverables: c.deliverables.map((d) => (d.id === delId ? { ...d, file: null } : d)),
-          })),
-          modal: null,
-        })),
-
-      cycleDeliverable: (clientId, delId) =>
-        patch((s) => {
-          const del = s.clients.find((c) => c.id === clientId)?.deliverables.find((d) => d.id === delId);
-          let clients = mapClient(s, clientId, (c) => ({
-            ...c,
-            deliverables: c.deliverables.map((d) =>
-              d.id === delId ? { ...d, status: DELIVERABLE_CYCLE[d.status] } : d,
-            ),
-          }));
-          if (del) {
-            clients = logActivity(
-              clients,
-              clientId,
-              'Deliverable "' + del.title + '" moved to ' + DELIVERABLE_CYCLE[del.status],
-              firstTeamName(s),
+          case 'invoice':
+            void run(
+              () =>
+                api.addInvoice(modal.clientId!, {
+                  number: f.number ?? '',
+                  baseAmount: Number(f.baseAmount) || 0,
+                  gstPercent: Number(f.gstPercent) || 0,
+                  gstMode: f.gstMode === 'included' ? 'included' : 'excluded',
+                  issueDate: f.issueDate || todayISO(),
+                  dueDate: f.dueDate || todayISO(),
+                  ...fileFields(f),
+                }),
+              { onSuccess: closed },
             );
-          }
-          return { clients };
-        }),
-
-      setTaskStatus: (clientId, taskId, status) =>
-        patch((s) => {
-          const task = s.clients.find((c) => c.id === clientId)?.tasks.find((t) => t.id === taskId);
-          let clients = mapClient(s, clientId, (c) => ({
-            ...c,
-            tasks: c.tasks.map((t) => (t.id === taskId ? { ...t, status } : t)),
-          }));
-          if (task && task.status !== status) {
-            clients = logActivity(
-              clients,
-              clientId,
-              'Task "' + task.title + '" moved to ' + status,
-              firstTeamName(s),
+            return;
+          case 'logPayment':
+            void run(
+              () =>
+                api.addPayment(modal.clientId!, modal.invId!, {
+                  bankAmount: Number(f.bankAmount) || 0,
+                  tds: Number(f.tds) || 0,
+                  date: f.date || todayISO(),
+                }),
+              { onSuccess: closed },
             );
+            return;
+          case 'attachInvoiceFile':
+            void run(() => api.setInvoiceFile(modal.clientId!, modal.invId!, fileFields(f)), {
+              onSuccess: closed,
+            });
+            return;
+          case 'deliverable':
+            void run(
+              () =>
+                api.addDeliverable(modal.clientId!, {
+                  title: f.title ?? '',
+                  description: f.description ?? '',
+                  owner: f.owner ?? '',
+                  dueDate: f.dueDate || todayISO(),
+                  status: f.status ?? 'Not started',
+                  ...fileFields(f),
+                }),
+              { onSuccess: closed },
+            );
+            return;
+          case 'attachFile':
+            void run(() => api.updateDeliverable(modal.clientId!, modal.delId!, fileFields(f)), {
+              onSuccess: closed,
+            });
+            return;
+          case 'document':
+            void run(
+              () =>
+                api.addDocument(modal.clientId!, {
+                  name: f.name ?? '',
+                  type: f.type ?? 'Other',
+                  url: f.fileUrl ?? '',
+                  source: f.source === 'client' ? 'client' : 'us',
+                }),
+              { onSuccess: closed },
+            );
+            return;
+          case 'activity':
+            void run(
+              () => api.addActivity(modal.clientId!, { note: f.note ?? '', author: f.author ?? '' }),
+              { onSuccess: closed },
+            );
+            return;
+          case 'task': {
+            const body = {
+              title: f.title ?? '',
+              description: f.description ?? '',
+              assignee: f.assignee ?? '',
+              status: f.status ?? 'New',
+              priority: f.priority ?? 'Medium',
+              dueDate: f.dueDate || '',
+              attachments: f.attachments ?? [],
+            };
+            void run(
+              () =>
+                modal.editing
+                  ? api.updateTask(modal.clientId!, modal.taskId!, body)
+                  : api.addTask(modal.clientId!, body),
+              { onSuccess: closed },
+            );
+            return;
           }
-          return { clients };
-        }),
+          case 'teammate':
+            void run(
+              () =>
+                api.addTeammate({
+                  name: f.name ?? '',
+                  email: f.email ?? '',
+                  role: f.role ?? '',
+                  permission: f.permission ?? 'Editor',
+                  password: f.password ?? '',
+                  access: f.access ?? { ...ALL_ACCESS },
+                }),
+              { onSuccess: closed },
+            );
+            return;
+          case 'permissions':
+            void run(
+              () => api.setTeammateAccess(modal.teammateId!, (f.access ?? { ...ALL_ACCESS }) as Access),
+              { onSuccess: closed },
+            );
+            return;
+          case 'followup': {
+            const body = {
+              name: f.name ?? '',
+              companyName: f.companyName ?? '',
+              email: f.email ?? '',
+              phone: f.phone ?? '',
+              relatedClientId: f.relatedClientId ?? '',
+              reason: f.reason ?? '',
+              owner: f.owner ?? '',
+              dueDate: f.dueDate || todayISO(),
+            };
+            void run(
+              () => (modal.editing ? api.updateFollowUp(modal.followUpId!, body) : api.addFollowUp(body)),
+              { onSuccess: closed },
+            );
+            return;
+          }
+          case 'completeFollowUp':
+            void run(
+              () =>
+                api.completeFollowUp(modal.followUpId!, {
+                  note: f.note ?? '',
+                  action: f.action === 'done' ? 'done' : 'snooze',
+                  nextDate: f.nextDate ?? '',
+                }),
+              { onSuccess: closed },
+            );
+            return;
+          case 'taskPreview':
+            patch(closed);
+            return;
+        }
+      },
 
-      removeTask: (clientId, taskId) =>
-        patch((s) => ({
-          clients: mapClient(s, clientId, (c) => ({ ...c, tasks: c.tasks.filter((t) => t.id !== taskId) })),
-        })),
+      removeItem: (listName, clientId, itemId) => {
+        const remove =
+          listName === 'contacts'
+            ? () => api.removeContact(clientId, itemId)
+            : listName === 'invoices'
+              ? () => api.removeInvoice(clientId, itemId)
+              : listName === 'deliverables'
+                ? () => api.removeDeliverable(clientId, itemId)
+                : () => api.removeDocument(clientId, itemId);
+        void run(remove, { onSuccess: { invoiceMenuOpenId: null } });
+      },
+
+      removeTeammate: (id) => {
+        void run(() => api.removeTeammate(id));
+      },
+      removeFollowUp: (id) => {
+        void run(() => api.removeFollowUp(id), { onSuccess: { followUpMenuOpenId: null } });
+      },
+      reopenFollowUp: (id) => {
+        void run(() => api.reopenFollowUp(id));
+      },
+      markInvoicePaid: (clientId, invId) => {
+        void run(() => api.settleInvoice(clientId, invId), { onSuccess: { invoiceMenuOpenId: null } });
+      },
+      removePayment: (clientId, invId, paymentId) => {
+        void run(() => api.removePayment(clientId, invId, paymentId));
+      },
+      removeInvoiceFile: (clientId, invId) => {
+        void run(() => api.clearInvoiceFile(clientId, invId), { onSuccess: { modal: null } });
+      },
+      removeDeliverableFile: (clientId, delId) => {
+        void run(() => api.updateDeliverable(clientId, delId, { fileName: '', fileUrl: '' }), {
+          onSuccess: { modal: null },
+        });
+      },
+      cycleDeliverable: (clientId, delId) => {
+        const current = clientById(clientId)?.deliverables.find((d) => d.id === delId);
+        if (!current) return;
+        void run(() =>
+          api.updateDeliverable(clientId, delId, { status: DELIVERABLE_CYCLE[current.status] }),
+        );
+      },
+      setTaskStatus: (clientId, taskId, status) => {
+        void run(() => api.updateTask(clientId, taskId, { status }));
+      },
+      removeTask: (clientId, taskId) => {
+        void run(() => api.removeTask(clientId, taskId));
+      },
     };
-  }, [patch]);
+  }, [applySnapshot, patch, run]);
 
   const value = useMemo(() => ({ state, actions }), [state, actions]);
   return <AppStateContext.Provider value={value}>{children}</AppStateContext.Provider>;

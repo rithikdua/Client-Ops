@@ -1,6 +1,6 @@
 import { GST_RATE_OPTIONS } from '../../data/options';
 import type { CurrencyCode } from '../../data/types';
-import { fmtMoney, gstBreakdown } from '../../lib/money';
+import { fmtMoney, gstBreakdown, toMinor } from '../../lib/money';
 import { SegmentedControl } from '../ui';
 import { FieldRow, ReadonlyTotal, SelectField, TextField, useModalForm } from './fields';
 
@@ -22,7 +22,8 @@ export function GstFields({
 }) {
   const { form, set } = useModalForm();
   const mode = form.gstMode === 'included' ? 'included' : 'excluded';
-  const { gst, total } = gstBreakdown(Number(form.baseAmount) || 0, Number(form.gstPercent) || 0, mode);
+  // The field holds whole currency units; the maths (and the server) work in minor units.
+  const { gst, total } = gstBreakdown(toMinor(form.baseAmount ?? 0), Number(form.gstPercent) || 0, mode);
   const pct = Number(form.gstPercent) || 0;
 
   const hint =

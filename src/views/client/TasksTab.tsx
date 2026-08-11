@@ -6,20 +6,24 @@ import { Button } from '../../ds/Button';
 import { Chip } from '../../ds/Chip';
 import { TrashButton } from '../../ds/Icon';
 import { fmtDate, parseISO, TODAY } from '../../lib/dates';
-import { priorityColor } from '../../lib/statusColors';
+import { priorityColor, taskStatusColor } from '../../lib/statusColors';
+import { useAccess } from '../../state/access';
 import { useApp } from '../../state/AppState';
 
 export function TasksTab({ client }: { client: Client }) {
   const { actions } = useApp();
+  const { canWrite } = useAccess();
   const projectKey = taskProjectKey(client.name);
 
   return (
     <div style={{ marginTop: 20 }}>
-      <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 12 }}>
-        <Button variant="secondary" size="sm" onClick={() => actions.openAddTask(client.id)}>
-          + Add task
-        </Button>
-      </div>
+      {canWrite && (
+        <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 12 }}>
+          <Button variant="secondary" size="sm" onClick={() => actions.openAddTask(client.id)}>
+            + Add task
+          </Button>
+        </div>
+      )}
       <div className="card">
         {client.tasks.map((t, i) => {
           const done = t.status === 'Done';
@@ -114,11 +118,17 @@ export function TasksTab({ client }: { client: Client }) {
                 >
                   {t.dueDate ? fmtDate(t.dueDate) : 'No due date'}
                 </span>
-                <TaskStatusSelect
-                  status={t.status}
-                  onChange={(status) => actions.setTaskStatus(client.id, t.id, status)}
-                />
-                <TrashButton onClick={() => actions.removeTask(client.id, t.id)} />
+                {canWrite ? (
+                  <>
+                    <TaskStatusSelect
+                      status={t.status}
+                      onChange={(status) => actions.setTaskStatus(client.id, t.id, status)}
+                    />
+                    <TrashButton onClick={() => actions.removeTask(client.id, t.id)} />
+                  </>
+                ) : (
+                  <Chip color={taskStatusColor(t.status)}>{t.status}</Chip>
+                )}
               </div>
             </div>
           );

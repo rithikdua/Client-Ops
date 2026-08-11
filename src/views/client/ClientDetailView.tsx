@@ -30,7 +30,7 @@ const TAB_LABELS: Record<ClientTabId, string> = {
 
 export function ClientDetailView({ client }: { client: Client }) {
   const { state, actions } = useApp();
-  const { showInvoiceStats, visibleClientTabs } = useAccess();
+  const { showInvoiceStats, visibleClientTabs, canWrite } = useAccess();
 
   // A restricted teammate previewing the account falls back to Overview rather
   // than seeing an empty tab.
@@ -103,9 +103,11 @@ export function ClientDetailView({ client }: { client: Client }) {
             </div>
           </div>
         </div>
-        <Button variant="secondary" size="md" onClick={() => actions.openEditClient(client)}>
-          Edit client
-        </Button>
+        {canWrite && (
+          <Button variant="secondary" size="md" onClick={() => actions.openEditClient(client)}>
+            Edit client
+          </Button>
+        )}
       </div>
 
       <div

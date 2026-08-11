@@ -1,7 +1,15 @@
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 
+const API_PORT = process.env.PORT ?? 8787;
+
 export default defineConfig({
   plugins: [react()],
-  server: { port: 5173 },
+  server: {
+    port: 5173,
+    // Same-origin in development, so session cookies work without CORS.
+    proxy: {
+      '/api': { target: `http://localhost:${API_PORT}`, changeOrigin: true },
+    },
+  },
 });

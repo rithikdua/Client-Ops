@@ -66,6 +66,7 @@ export type FormKey =
   | 'gstPercent'
   | 'gstMode'
   | 'permission'
+  | 'password'
   | 'reason'
   | 'relatedClientId'
   | 'companyName'

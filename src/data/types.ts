@@ -59,6 +59,11 @@ export interface Payment {
   date: string;
 }
 
+/**
+ * NOTE: every monetary field in this file is an integer count of **minor
+ * units** (paise/cents), matching the API and the database. Format with
+ * `fmtMoney`, never by hand.
+ */
 export interface Invoice {
   id: string;
   number: string;
@@ -122,8 +127,12 @@ export interface Client {
   health: Health;
   owner: string;
   stage: Stage;
-  /** Gross contract value, derived from base + GST on save. */
-  contractValue: number;
+  /**
+   * Gross contract value in minor units, derived from base + GST on save.
+   * Absent when the signed-in user has no invoice access — the server omits
+   * every money field rather than sending values the UI merely hides.
+   */
+  contractValue?: number;
   billingCycle: BillingCycle;
   startDate: string;
   currency: CurrencyCode;
