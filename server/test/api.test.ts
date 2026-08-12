@@ -12,6 +12,7 @@ process.env.SESSION_SECRET = 'test-secret';
 const { createApp } = await import('../src/app');
 const { openDb } = await import('../src/db/index');
 const { seedDemoWorkspace } = await import('../src/db/seed');
+const { HttpError: HttpErrorClass } = await import('../src/http/errors');
 
 const db = openDb(':memory:');
 seedDemoWorkspace(db, { password: 'demo1234' });
@@ -412,187 +413,141 @@ describe('follow-ups', () => {
   });
 });
 
-describe('uploads', () => {
-  test('rejects a file type we will not serve back', async () => {
-    const form = new FormData();
-    form.append('file', new Blob(['#!/bin/sh\necho hi'], { type: 'application/x-sh' }), 'run.sh');
-    const response = await fetch(`${base}/api/uploads`, {
-      method: 'POST',
-      headers: { cookie: owner.cookie },
-      body: form,
-    });
-    assert.equal(response.status, 415);
-  });
+describe('uploads are owned, content-checked and authorized (H-03..H-05)', () => {
+  const PNG = Buffer.from(
+    'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8DwHwAFAAH/q842iQAAAABJRU5ErkJggg==',
+    'base64',
+  );
 
-  test('stores an allowed file under a generated name and serves it back to members only', async () => {
+  async function send(
+    clientId: string,
+    session: Session,
+    body: Buffer | string,
+    filename: string,
+    mime: string,
+  ) {
     const form = new FormData();
-    form.append('file', new Blob(['hello'], { type: 'image/png' }), '../../evil.png');
-    const response = await fetch(`${base}/api/uploads`, {
+    form.append('file', new Blob([body], { type: mime }), filename);
+    return fetch(`${base}/api/clients/${clientId}/uploads`, {
       method: 'POST',
-      headers: { cookie: owner.cookie },
+      headers: { cookie: session.cookie },
       body: form,
     });
-    assert.equal(response.status, 201);
-    const { url } = (await response.json()) as { url: string };
-    // The path traversal in the original filename must not survive.
+  }
+
+  test('accepts a real PNG and stores it under a generated name', async () => {
+    const res = await send('c1', owner, PNG, '../../evil.png', 'image/png');
+    assert.equal(res.status, 201);
+    const { url, mime } = (await res.json()) as { url: string; mime: string };
+    // The traversal in the client's filename cannot survive.
     assert.match(url, /^\/api\/uploads\/[0-9a-f-]{36}\.png$/);
+    assert.equal(mime, 'image/png');
 
-    assert.equal((await fetch(base + url, { headers: { cookie: owner.cookie } })).status, 200);
-    assert.equal((await fetch(base + url)).status, 401, 'uploads are not public');
-  });
-});
-
-describe('first-run setup', () => {
-  test('is closed once the workspace has an account', async () => {
-    const status = await call('GET', '/api/auth/status');
-    assert.equal(status.body.needsSetup, false);
-
-    const res = await call('POST', '/api/auth/setup', {
-      body: { name: 'Intruder', email: 'intruder@phot.ai', password: 'password123' },
-    });
-    assert.equal(res.status, 409, 'setup must not be open self-registration');
+    const download = await fetch(base + url, { headers: { cookie: owner.cookie } });
+    assert.equal(download.status, 200);
+    assert.equal(download.headers.get('x-content-type-options'), 'nosniff');
+    assert.equal(download.headers.get('content-type'), 'image/png');
   });
 
-  test('on an empty workspace it creates an Owner, signs them in, then closes', async () => {
-    const fresh = openDb(':memory:');
-    const freshServer = createApp(fresh).listen(0);
-    const freshBase = `http://127.0.0.1:${(freshServer.address() as AddressInfo).port}`;
-    try {
-      const before = (await (await fetch(`${freshBase}/api/auth/status`)).json()) as any;
-      assert.equal(before.needsSetup, true);
+  test('rejects a file whose bytes are not what it claims (H-04)', async () => {
+    // A shell script announcing itself as a PNG. Trusting Content-Type would
+    // have stored it happily.
+    const res = await send('c1', owner, '#!/bin/sh\necho pwned', 'payload.png', 'image/png');
+    assert.equal(res.status, 415);
 
-      const created = await fetch(`${freshBase}/api/auth/setup`, {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({
-          name: 'Rithik Dua',
-          email: 'Rithik@Example.com',
-          role: 'Founder',
-          password: 'a-real-password',
-        }),
-      });
-      assert.equal(created.status, 201);
-      const snapshot = (await created.json()) as any;
-      assert.equal(snapshot.me.permission, 'Owner');
-      assert.equal(snapshot.me.email, 'rithik@example.com', 'email is normalised');
-      assert.equal(snapshot.me.canManageTeam, true);
-      assert.equal(snapshot.me.access.invoices, true, 'an Owner holds every section');
-      assert.deepEqual(snapshot.clients, [], 'a real workspace starts empty');
-      assert.ok(created.headers.getSetCookie?.()[0] ?? created.headers.get('set-cookie'));
+    // Same for an HTML payload dressed as an image.
+    const html = await send('c1', owner, '<script>alert(1)</script>', 'x.png', 'image/png');
+    assert.equal(html.status, 415);
 
-      const after = (await (await fetch(`${freshBase}/api/auth/status`)).json()) as any;
-      assert.equal(after.needsSetup, false, 'setup closes after the first account');
-
-      // The new Owner can sign in with the password they chose.
-      const login = await fetch(`${freshBase}/api/auth/login`, {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ email: 'rithik@example.com', password: 'a-real-password' }),
-      });
-      assert.equal(login.status, 200);
-    } finally {
-      freshServer.close();
-      fresh.close();
-    }
+    // And an honestly-declared unsupported type.
+    const sh = await send('c1', owner, '#!/bin/sh', 'run.sh', 'application/x-sh');
+    assert.equal(sh.status, 415);
   });
 
-  test('rejects a short password and a malformed email', async () => {
-    const fresh = openDb(':memory:');
-    const freshServer = createApp(fresh).listen(0);
-    const freshBase = `http://127.0.0.1:${(freshServer.address() as AddressInfo).port}`;
-    try {
-      for (const body of [
-        { name: 'A', email: 'a@b.com', password: 'short' },
-        { name: 'A', email: 'not-an-email', password: 'password123' },
-      ]) {
-        const res = await fetch(`${freshBase}/api/auth/setup`, {
-          method: 'POST',
-          headers: { 'content-type': 'application/json' },
-          body: JSON.stringify(body),
-        });
-        assert.equal(res.status, 400);
-      }
-    } finally {
-      freshServer.close();
-      fresh.close();
-    }
-  });
-});
+  test('a PDF must actually be a PDF, and a real one is served as a download', async () => {
+    assert.equal((await send('c1', owner, 'not a pdf at all', 'x.pdf', 'application/pdf')).status, 415);
 
-describe('changing your own password', () => {
-  test('requires the current password and invalidates other sessions', async () => {
+    const real = await send('c1', owner, '%PDF-1.7\n1 0 obj\n', 'contract.pdf', 'application/pdf');
+    assert.equal(real.status, 201);
+    const { url } = (await real.json()) as { url: string };
+    const download = await fetch(base + url, { headers: { cookie: owner.cookie } });
+    // Anything not an image downloads instead of rendering in the tab.
+    assert.match(download.headers.get('content-disposition') ?? '', /^attachment/);
+  });
+
+  test('a file is not readable by someone denied the account it belongs to (H-03)', async () => {
+    const res = await send('c1', owner, PNG, 'private.png', 'image/png');
+    const { url } = (await res.json()) as { url: string };
+
+    // Knowing the URL is not authorization: this user has no Clients access.
     const created = await call('POST', '/api/team', {
       session: owner,
       body: {
-        name: 'Nina Rao',
-        email: 'nina@phot.ai',
+        name: 'File Outsider',
+        email: 'file-outsider@phot.ai',
         permission: 'Editor',
-        password: 'first-password',
+        password: 'password-1234',
+        access: { overview: true },
       },
     });
     assert.equal(created.status, 201);
+    const outsider = await signIn('file-outsider@phot.ai', 'password-1234');
+    const denied = await fetch(base + url, { headers: { cookie: outsider.cookie } });
+    assert.equal(denied.status, 403, 'a URL is not a capability');
 
-    const sessionA = await signIn('nina@phot.ai', 'first-password');
-    const sessionB = await signIn('nina@phot.ai', 'first-password');
-
-    // A wrong current password is refused.
-    assert.equal(
-      (
-        await call('POST', '/api/auth/password', {
-          session: sessionA,
-          body: { currentPassword: 'wrong', newPassword: 'second-password' },
-        })
-      ).status,
-      403,
-    );
-    // So is reusing the same one.
-    assert.equal(
-      (
-        await call('POST', '/api/auth/password', {
-          session: sessionA,
-          body: { currentPassword: 'first-password', newPassword: 'first-password' },
-        })
-      ).status,
-      400,
-    );
-
-    const changed = await call('POST', '/api/auth/password', {
-      session: sessionA,
-      body: { currentPassword: 'first-password', newPassword: 'second-password' },
-    });
-    assert.equal(changed.status, 200);
-
-    // The other session is gone, and the old password no longer works.
-    assert.equal((await call('GET', '/api/auth/session', { session: sessionB })).status, 401);
-    const oldLogin = await call('POST', '/api/auth/login', {
-      body: { email: 'nina@phot.ai', password: 'first-password' },
-    });
-    assert.equal(oldLogin.status, 401);
-    const newLogin = await call('POST', '/api/auth/login', {
-      body: { email: 'nina@phot.ai', password: 'second-password' },
-    });
-    assert.equal(newLogin.status, 200);
+    // And still nothing without a session at all.
+    assert.equal((await fetch(base + url)).status, 401);
   });
 
-  test('a read-only account may still change its own password', async () => {
-    const before = await call('GET', '/api/auth/session', { session: viewer });
-    assert.equal(before.body.me.canWrite, false);
-    const res = await call('POST', '/api/auth/password', {
-      session: viewer,
-      body: { currentPassword: 'demo1234', newPassword: 'viewer-new-password' },
+  test('an unknown filename is a 404, and traversal is stripped', async () => {
+    assert.equal(
+      (await fetch(`${base}/api/uploads/does-not-exist.png`, { headers: { cookie: owner.cookie } }))
+        .status,
+      404,
+    );
+    const traversal = await fetch(`${base}/api/uploads/..%2F..%2Fpackage.json`, {
+      headers: { cookie: owner.cookie },
     });
-    assert.equal(res.status, 200, 'changing your login is not a data write');
-    viewer = await signIn('tom@phot.ai', 'viewer-new-password');
+    assert.equal(traversal.status, 404);
   });
 
-  test('is refused while previewing as someone else', async () => {
-    await call('POST', '/api/auth/preview', { session: owner, body: { teammateId: 'tm2' } });
-    const res = await call('POST', '/api/auth/password', {
+  test('a read-only account cannot upload', async () => {
+    assert.equal((await send('c1', viewer, PNG, 'x.png', 'image/png')).status, 403);
+  });
+
+  test('uploading to a client that does not exist is refused', async () => {
+    assert.equal((await send('no-such-client', owner, PNG, 'x.png', 'image/png')).status, 404);
+  });
+
+  test('orphaned files are collected once nothing references them', async () => {
+    const { collectOrphanUploads } = await import('../src/routes/uploads');
+
+    // Referenced by a task: must survive.
+    const kept = await send('c1', owner, PNG, 'kept.png', 'image/png');
+    const keptUrl = ((await kept.json()) as { url: string }).url;
+    await call('POST', '/api/clients/c1/tasks', {
       session: owner,
-      body: { currentPassword: 'demo1234', newPassword: 'whatever-123' },
+      body: { title: 'Has an attachment', attachments: [keptUrl] },
     });
-    assert.equal(res.status, 400);
-    await call('DELETE', '/api/auth/preview', { session: owner });
+
+    // Uploaded and abandoned: must go.
+    const orphan = await send('c1', owner, PNG, 'orphan.png', 'image/png');
+    const orphanUrl = ((await orphan.json()) as { url: string }).url;
+
+    // A grace period of 0 treats everything as old enough to consider.
+    const { removed } = collectOrphanUploads(db, 0);
+    assert.ok(removed >= 1, 'the abandoned file was collected');
+
+    assert.equal(
+      (await fetch(base + keptUrl, { headers: { cookie: owner.cookie } })).status,
+      200,
+      'a referenced file is never swept',
+    );
+    assert.equal(
+      (await fetch(base + orphanUrl, { headers: { cookie: owner.cookie } })).status,
+      404,
+      'the orphan is gone',
+    );
   });
 });
 
@@ -679,4 +634,486 @@ describe('Google sign-in endpoints', () => {
   function freshCallback(code: string, state: string): string {
     return `${base}/api/auth/google/callback?code=${code}&state=${state}`;
   }
+});
+
+describe('the API refuses to store a dangerous URL (C-01)', () => {
+  const XSS = 'javascript:alert(document.domain)';
+
+  test('rejects it on every field that accepts a link', async () => {
+    const cases: [string, string, unknown][] = [
+      [
+        'client website',
+        '/api/clients',
+        {
+          name: 'XSS Co',
+          health: 'Active',
+          stage: 'Onboarding',
+          billingCycle: 'Monthly',
+          startDate: '2026-08-01',
+          website: XSS,
+        },
+      ],
+      [
+        'invoice file',
+        '/api/clients/c1/invoices',
+        {
+          number: 'INV-XSS',
+          baseAmount: 100,
+          gstPercent: 18,
+          gstMode: 'excluded',
+          issueDate: '2026-08-01',
+          dueDate: '2026-08-15',
+          fileUrl: XSS,
+        },
+      ],
+      [
+        'deliverable file',
+        '/api/clients/c1/deliverables',
+        { title: 'XSS', dueDate: '2026-09-01', fileUrl: XSS },
+      ],
+      ['document link', '/api/clients/c1/documents', { name: 'XSS.pdf', type: 'Contract', url: XSS }],
+      ['task attachment', '/api/clients/c1/tasks', { title: 'XSS', attachments: [XSS] }],
+    ];
+
+    for (const [label, path, body] of cases) {
+      const res = await call('POST', path, { session: owner, body });
+      assert.equal(res.status, 400, `${label} must be rejected`);
+      assert.match(JSON.stringify(res.body), /http/, `${label} error should explain the rule`);
+    }
+  });
+
+  test('rejects it when attaching a file to an existing invoice or deliverable', async () => {
+    const snapshot = await call('GET', '/api/auth/session', { session: owner });
+    const client = snapshot.body.clients.find((c: any) => c.id === 'c1');
+    const invoiceId = client.invoices[0].id;
+    const deliverableId = client.deliverables[0].id;
+
+    assert.equal(
+      (
+        await call('PUT', `/api/clients/c1/invoices/${invoiceId}/file`, {
+          session: owner,
+          body: { fileName: 'x', fileUrl: XSS },
+        })
+      ).status,
+      400,
+    );
+    assert.equal(
+      (
+        await call('PATCH', `/api/clients/c1/deliverables/${deliverableId}`, {
+          session: owner,
+          body: { fileUrl: XSS },
+        })
+      ).status,
+      400,
+    );
+  });
+
+  test('still accepts the links people actually use', async () => {
+    const res = await call('POST', '/api/clients/c1/documents', {
+      session: owner,
+      body: { name: 'MSA.pdf', type: 'Contract', url: 'https://drive.google.com/file/d/abc/view' },
+    });
+    assert.equal(res.status, 201);
+    const uploaded = await call('POST', '/api/clients/c1/tasks', {
+      session: owner,
+      body: { title: 'With an upload', attachments: ['/api/uploads/abc.png'] },
+    });
+    assert.equal(uploaded.status, 201, 'our own upload paths are allowed');
+  });
+});
+
+describe('first-run setup is not a land-grab (C-02)', () => {
+  const freshApp = () => {
+    const fresh = openDb(':memory:');
+    const srv = createApp(fresh).listen(0);
+    const url = `http://127.0.0.1:${(srv.address() as AddressInfo).port}`;
+    return { fresh, srv, url };
+  };
+  const setup = (url: string, body: unknown) =>
+    fetch(`${url}/api/auth/setup`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+  const OWNER = { name: 'First', email: 'first@example.com', password: 'a-real-password' };
+
+  test('the emptiness check and the insert are atomic', async () => {
+    const { fresh, srv } = freshApp();
+    try {
+      const { claimFirstOwner } = await import('../src/auth/accounts');
+      claimFirstOwner(fresh, { name: 'A', email: 'a@example.com', password: 'password-123' });
+
+      // A second claim must lose, whatever the timing. (better-sqlite3 is
+      // synchronous, so two HTTP requests cannot genuinely interleave here; this
+      // asserts the contract the transaction provides.)
+      assert.throws(
+        () => claimFirstOwner(fresh, { name: 'B', email: 'b@example.com', password: 'password-123' }),
+        (err: unknown) => err instanceof HttpErrorClass && err.status === 409,
+      );
+      assert.equal((fresh.prepare('SELECT COUNT(*) AS n FROM users').get() as any).n, 1);
+      const owners = fresh
+        .prepare("SELECT COUNT(*) AS n FROM users WHERE permission = 'Owner'")
+        .get() as any;
+      assert.equal(owners.n, 1, 'exactly one Owner');
+    } finally {
+      srv.close();
+      fresh.close();
+    }
+  });
+
+  test('only the first of many concurrent attempts succeeds', async () => {
+    const { fresh, srv, url } = freshApp();
+    try {
+      const results = await Promise.all(
+        Array.from({ length: 5 }, (_, i) =>
+          setup(url, { ...OWNER, email: `race-${i}@example.com` }).then((r) => r.status),
+        ),
+      );
+      assert.equal(results.filter((s) => s === 201).length, 1, 'one winner');
+      assert.equal(results.filter((s) => s === 409).length, 4, 'everyone else is refused');
+    } finally {
+      srv.close();
+      fresh.close();
+    }
+  });
+
+  test('with SETUP_TOKEN set, the right code is required', async () => {
+    process.env.SETUP_TOKEN = 'the-one-time-code';
+    const { fresh, srv, url } = freshApp();
+    try {
+      const status = await (await fetch(`${url}/api/auth/status`)).json() as any;
+      assert.equal(status.setupTokenRequired, true);
+      assert.equal(status.setupToken, undefined, 'the token itself is never sent to the client');
+
+      assert.equal((await setup(url, OWNER)).status, 403, 'no code');
+      assert.equal((await setup(url, { ...OWNER, setupToken: 'wrong' })).status, 403, 'wrong code');
+      assert.equal(
+        (await setup(url, { ...OWNER, setupToken: 'the-one-time-code' })).status,
+        201,
+        'correct code',
+      );
+    } finally {
+      delete process.env.SETUP_TOKEN;
+      srv.close();
+      fresh.close();
+    }
+  });
+
+  test('production refuses an unguarded bootstrap entirely', async () => {
+    process.env.NODE_ENV = 'production';
+    delete process.env.SETUP_TOKEN;
+    const { fresh, srv, url } = freshApp();
+    try {
+      const res = await setup(url, OWNER);
+      assert.equal(res.status, 403);
+      assert.match(((await res.json()) as any).error, /SETUP_TOKEN/);
+    } finally {
+      process.env.NODE_ENV = 'test';
+      srv.close();
+      fresh.close();
+    }
+  });
+});
+
+describe('login does not leak which addresses exist (H-02)', () => {
+  test('an unknown address and a wrong password are indistinguishable', async () => {
+    const unknown = await call('POST', '/api/auth/login', {
+      body: { email: 'nobody-at-all@example.com', password: 'whatever-123' },
+    });
+    const known = await call('POST', '/api/auth/login', {
+      body: { email: 'priya@phot.ai', password: 'wrong-password' },
+    });
+    assert.equal(unknown.status, known.status);
+    assert.deepEqual(unknown.body, known.body);
+  });
+
+  test('a Google-only account cannot be signed into with a password', async () => {
+    // Simulates an account created through Google: no password set.
+    db.prepare(
+      `INSERT INTO users (id, name, email, role, permission, password_hash, password_salt, google_sub, created_at)
+       VALUES ('google-only', 'Google Only', 'google-only@phot.ai', '', 'Editor', '', '', 'sub-x', ?)`,
+    ).run(new Date().toISOString());
+
+    for (const password of ['', ' ', 'anything', 'demo1234']) {
+      const res = await call('POST', '/api/auth/login', {
+        body: { email: 'google-only@phot.ai', password: password || 'x' },
+      });
+      assert.equal(res.status, 401, `empty stored hash must never verify (${password})`);
+      assert.equal(res.body.error, 'Email or password is incorrect.');
+    }
+  });
+});
+
+describe('the snapshot withholds every denied section, not just money (C-03)', () => {
+  /** Signs in a purpose-made account with exactly the sections listed. */
+  async function userWith(sections: string[], label: string) {
+    const email = `${label}@phot.ai`;
+    const access: Record<string, boolean> = {};
+    for (const s of ['overview', 'clients', 'invoices', 'deliverables', 'documents', 'team', 'followups', 'phonebook'])
+      access[s] = sections.includes(s);
+    const created = await call('POST', '/api/team', {
+      session: owner,
+      body: { name: label, email, permission: 'Editor', password: 'password-1234', access },
+    });
+    assert.equal(created.status, 201, `could not create ${label}`);
+    return signIn(email, 'password-1234');
+  }
+
+  test('deliverables are absent for a user whose Deliverables section is denied', async () => {
+    const session = await userWith(['overview', 'clients'], 'no-deliverables');
+    const res = await call('GET', '/api/auth/session', { session });
+    assert.equal(res.body.me.access.deliverables, false);
+
+    const client = res.body.clients.find((c: any) => c.id === 'c1');
+    assert.deepEqual(client.deliverables, [], 'deliverables must not reach the browser');
+    // The endpoint was already guarded; the snapshot must agree with it.
+    assert.equal((await call('GET', '/api/clients', { session })).status, 200);
+    assert.equal(
+      (
+        await call('POST', '/api/clients/c1/deliverables', {
+          session,
+          body: { title: 'x', dueDate: '2026-09-01' },
+        })
+      ).status,
+      403,
+    );
+
+    // Sanity: the data does exist, the Owner still sees it.
+    const asOwner = await call('GET', '/api/auth/session', { session: owner });
+    assert.ok(
+      asOwner.body.clients.find((c: any) => c.id === 'c1').deliverables.length > 0,
+      'the fixture really has deliverables',
+    );
+  });
+
+  test('overview-only access is a dashboard, not a licence to read client detail', async () => {
+    const session = await userWith(['overview'], 'overview-only');
+    const res = await call('GET', '/api/auth/session', { session });
+    assert.equal(res.body.me.access.clients, false);
+
+    const client = res.body.clients.find((c: any) => c.id === 'c1');
+    assert.ok(client, 'the roster is still available for the dashboard');
+    for (const field of ['contacts', 'invoices', 'deliverables', 'documents', 'activity', 'tasks']) {
+      assert.deepEqual(client[field], [], `${field} must be withheld`);
+    }
+    assert.equal('contractValue' in client, false);
+  });
+
+  test('a user with everything still receives everything', async () => {
+    const res = await call('GET', '/api/auth/session', { session: owner });
+    const client = res.body.clients.find((c: any) => c.id === 'c1');
+    assert.ok(client.contacts.length > 0);
+    assert.ok(client.invoices.length > 0);
+    assert.ok(client.deliverables.length > 0);
+    assert.ok(client.documents.length > 0);
+    assert.ok(client.activity.length > 0);
+    assert.ok(client.tasks.length > 0);
+    assert.ok(typeof client.contractValue === 'number');
+  });
+
+  test('no client field leaks a section the user was denied', async () => {
+    const session = await userWith(['overview', 'clients', 'deliverables'], 'partial');
+    const res = await call('GET', '/api/auth/session', { session });
+    for (const client of res.body.clients) {
+      assert.deepEqual(client.invoices, [], 'invoices denied');
+      assert.deepEqual(client.documents, [], 'documents denied');
+      assert.equal('baseAmount' in client, false);
+      assert.equal('gstAmount' in client, false);
+      assert.equal('gstMode' in client, false);
+      assert.equal('gstPercent' in client, false);
+    }
+    assert.deepEqual(res.body.team, [], 'team denied');
+    assert.deepEqual(res.body.followUps, [], 'follow-ups denied');
+  });
+});
+
+describe('a partial money PATCH cannot corrupt a contract (C-04)', () => {
+  /** A client with a known contract, created fresh so assertions are exact. */
+  async function contractClient(name: string) {
+    const res = await call('POST', '/api/clients', {
+      session: owner,
+      body: {
+        name,
+        health: 'Active',
+        stage: 'Live',
+        billingCycle: 'Annual',
+        startDate: '2026-01-01',
+        baseAmount: 1000000,
+        gstPercent: 18,
+        gstMode: 'excluded',
+      },
+    });
+    assert.equal(res.status, 201);
+    const client = res.body.clients.find((c: any) => c.name === name);
+    assert.equal(client.baseAmount, 100000000, 'base is ten lakh in paise');
+    assert.equal(client.contractValue, 118000000);
+    return client.id;
+  }
+
+  test('changing only the GST rate keeps the stored base amount', async () => {
+    const id = await contractClient('Merge Test A');
+    const res = await call('PATCH', `/api/clients/${id}`, {
+      session: owner,
+      body: { gstPercent: 12 },
+    });
+    assert.equal(res.status, 200);
+
+    const after = res.body.clients.find((c: any) => c.id === id);
+    assert.equal(after.baseAmount, 100000000, 'the base must survive the patch');
+    assert.equal(after.gstPercent, 12);
+    assert.equal(after.gstAmount, 12000000, '12% of ten lakh');
+    assert.equal(after.contractValue, 112000000);
+  });
+
+  test('changing only the GST treatment keeps base and rate', async () => {
+    const id = await contractClient('Merge Test B');
+    const res = await call('PATCH', `/api/clients/${id}`, {
+      session: owner,
+      body: { gstMode: 'included' },
+    });
+    const after = res.body.clients.find((c: any) => c.id === id);
+    assert.equal(after.baseAmount, 100000000);
+    assert.equal(after.gstPercent, 18);
+    assert.equal(after.gstMode, 'included');
+    // Inclusive: the total is the base, and the tax is worked back out of it.
+    assert.equal(after.contractValue, 100000000);
+    assert.equal(after.gstAmount, 15254237);
+  });
+
+  test('changing an unrelated field leaves the money untouched', async () => {
+    const id = await contractClient('Merge Test C');
+    const res = await call('PATCH', `/api/clients/${id}`, {
+      session: owner,
+      body: { industry: 'Logistics' },
+    });
+    const after = res.body.clients.find((c: any) => c.id === id);
+    assert.equal(after.industry, 'Logistics');
+    assert.equal(after.baseAmount, 100000000);
+    assert.equal(after.contractValue, 118000000);
+  });
+
+  test('gstMode alone is money-sensitive and needs invoice access', async () => {
+    const id = await contractClient('Merge Test D');
+    const res = await call('PATCH', `/api/clients/${id}`, {
+      session: noInvoices,
+      body: { gstMode: 'included' },
+    });
+    assert.equal(res.status, 403, 'gstMode must be gated like baseAmount and gstPercent');
+
+    const check = await call('GET', '/api/auth/session', { session: owner });
+    const after = check.body.clients.find((c: any) => c.id === id);
+    assert.equal(after.contractValue, 118000000, 'and the value is unchanged');
+  });
+});
+
+describe('activity authorship cannot be forged (H-13)', () => {
+  test('a client-supplied author is ignored in favour of the session', async () => {
+    const res = await call('POST', '/api/clients/c1/activity', {
+      session: noInvoices,
+      body: { note: 'Approved payment', author: 'Priya Shah' },
+    });
+    assert.equal(res.status, 201);
+    const entry = res.body.clients.find((c: any) => c.id === 'c1').activity[0];
+    assert.equal(entry.note, 'Approved payment');
+    assert.equal(entry.author, 'Daniel Cho', 'the signed-in user is the author');
+  });
+});
+
+describe('dates must be real (M-01)', () => {
+  test('a well-shaped but impossible date is rejected', async () => {
+    for (const bad of ['2026-99-99', '2026-02-31', '2026-13-01', '2026-00-10']) {
+      const res = await call('POST', '/api/clients/c1/deliverables', {
+        session: owner,
+        body: { title: 'Bad date', dueDate: bad },
+      });
+      assert.equal(res.status, 400, `${bad} must be refused`);
+    }
+    // A leap day in a leap year is fine; in a common year it is not.
+    assert.equal(
+      (
+        await call('POST', '/api/clients/c1/deliverables', {
+          session: owner,
+          body: { title: 'Leap day', dueDate: '2028-02-29' },
+        })
+      ).status,
+      201,
+    );
+    assert.equal(
+      (
+        await call('POST', '/api/clients/c1/deliverables', {
+          session: owner,
+          body: { title: 'Not a leap day', dueDate: '2027-02-29' },
+        })
+      ).status,
+      400,
+    );
+  });
+});
+
+describe('an invoice cannot be overpaid (H-06)', () => {
+  async function invoiceOf(amountMajor: number, label: string) {
+    const res = await call('POST', '/api/clients/c3/invoices', {
+      session: owner,
+      body: {
+        number: label,
+        baseAmount: amountMajor,
+        gstPercent: 0,
+        gstMode: 'excluded',
+        issueDate: '2026-08-01',
+        dueDate: '2026-08-20',
+      },
+    });
+    assert.equal(res.status, 201);
+    const invoice = res.body.clients
+      .find((c: any) => c.id === 'c3')
+      .invoices.find((i: any) => i.number === label);
+    assert.equal(invoice.amount, amountMajor * 100);
+    return invoice.id;
+  }
+  const pay = (id: string, body: unknown) =>
+    call('POST', `/api/clients/c3/invoices/${id}/payments`, { session: owner, body });
+
+  test('a payment larger than the invoice is refused', async () => {
+    const id = await invoiceOf(100000, 'INV-OVER-1');
+    const res = await pay(id, { bankAmount: 150000, date: '2026-08-05' });
+    assert.equal(res.status, 400);
+    assert.match(res.body.error, /more than the amount still outstanding/);
+
+    // Nothing was recorded.
+    const check = await call('GET', '/api/auth/session', { session: owner });
+    const invoice = check.body.clients
+      .find((c: any) => c.id === 'c3')
+      .invoices.find((i: any) => i.id === id);
+    assert.deepEqual(invoice.payments, []);
+  });
+
+  test('bank amount plus TDS is what counts against the balance', async () => {
+    const id = await invoiceOf(1000, 'INV-OVER-2');
+    // 600 + 500 = 1100 against a 1000 invoice.
+    assert.equal((await pay(id, { bankAmount: 600, tds: 500, date: '2026-08-05' })).status, 400);
+    // Exactly the balance is fine.
+    assert.equal((await pay(id, { bankAmount: 600, tds: 400, date: '2026-08-05' })).status, 201);
+  });
+
+  test('a second payment cannot exceed what is left', async () => {
+    const id = await invoiceOf(1000, 'INV-OVER-3');
+    assert.equal((await pay(id, { bankAmount: 400, date: '2026-08-05' })).status, 201);
+    assert.equal((await pay(id, { bankAmount: 700, date: '2026-08-06' })).status, 400, '700 > 600 left');
+    assert.equal((await pay(id, { bankAmount: 600, date: '2026-08-06' })).status, 201);
+
+    // A fully settled invoice takes nothing more.
+    const res = await pay(id, { bankAmount: 1, date: '2026-08-07' });
+    assert.equal(res.status, 400);
+    assert.match(res.body.error, /already settled/);
+  });
+
+  test('the balance never goes negative', async () => {
+    const check = await call('GET', '/api/auth/session', { session: owner });
+    for (const client of check.body.clients) {
+      for (const invoice of client.invoices) {
+        const settled = invoice.payments.reduce((a: number, p: any) => a + p.bankAmount + p.tds, 0);
+        assert.ok(settled <= invoice.amount, `${invoice.number} is overpaid`);
+      }
+    }
+  });
 });

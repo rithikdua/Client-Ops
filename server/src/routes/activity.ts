@@ -10,7 +10,9 @@ export function activityRoutes(db: Db): Router {
   router.use(requireSection('clients'));
 
   // Only hand-written notes are accepted here; `system` entries are written by
-  // the server as a side effect of other mutations and can't be forged.
+  // the server as a side effect of other mutations and can't be forged. The
+  // author is taken from the session, never the request body — otherwise anyone
+  // could file "Approved payment" under the CEO's name.
   router.post('/', requireWrite, (req, res) => {
     const { clientId } = req.params as { clientId: string };
     assertClient(db, clientId);
@@ -22,7 +24,7 @@ export function activityRoutes(db: Db): Router {
       newId(),
       clientId,
       todayISO(),
-      input.author || req.actor!.name,
+      req.actor!.name,
       input.note,
       new Date().toISOString(),
     );

@@ -6,6 +6,7 @@ import { Icon, TrashButton } from '../../ds/Icon';
 import { fmtDate } from '../../lib/dates';
 import { isDeliverableOverdue } from '../../lib/invoices';
 import { deliverableStatusColor } from '../../lib/statusColors';
+import { safeHref } from '../../lib/urls';
 import { useAccess } from '../../state/access';
 import { useApp } from '../../state/AppState';
 
@@ -44,9 +45,9 @@ export function DeliverablesTab({ client }: { client: Client }) {
                 <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 6 }}>
                   <Icon name="document" size={13} />
                   <a
-                    href={d.file.url || '#'}
+                    href={safeHref(d.file.url)}
                     target="_blank"
-                    rel="noreferrer"
+                    rel="noreferrer noopener"
                     style={{ fontSize: 12, fontWeight: 500 }}
                   >
                     {d.file.name}

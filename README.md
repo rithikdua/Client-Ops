@@ -32,6 +32,11 @@ Everyone after the first account is created by an Owner from the **Team** screen
 (or the CLI). There is deliberately **no open sign-up** — the setup endpoint
 closes permanently as soon as one account exists.
 
+> **Deploying anywhere public?** Set `SETUP_TOKEN` to a random string first. The
+> setup screen then asks for it, so a stranger who finds the URL before you
+> cannot claim the Owner account. The server refuses to run open setup at all
+> when `NODE_ENV=production` and no token is set.
+
 Each person can change their own password from **Password** in the sidebar; doing
 so signs out their other sessions.
 
@@ -87,13 +92,14 @@ model working. Demo data is never loaded automatically; set `SEED_DEMO_DATA=1` i
 you want the server to load it on an empty database at boot.
 
 ```bash
-npm test           # 57 server tests (node:test)
+npm test           # 86 server tests (node:test)
 npm run typecheck  # both tsconfigs
 npm run build      # typecheck + production web build
 npm start          # production API (NODE_ENV=production)
 npm run create-user # create an account from the terminal
 npm run db:reset   # DESTRUCTIVE: empty the database (back to first-run setup)
 npm run db:demo    # DESTRUCTIVE: empty it, then load the sample workspace
+npm run uploads:gc # delete uploaded files nothing references any more
 ```
 
 ## Architecture
@@ -188,12 +194,21 @@ where it counts:
   cookie, stored server-side so they can expire and be revoked. `SESSION_SECRET`
   is mandatory in production.
 - **Passwords** are scrypt (N=2^15) with a per-user salt, compared in constant
-  time. Login answers identically for a wrong password and an unknown address,
-  so the endpoint cannot be used to enumerate accounts.
-- **Per-section access is default-deny** and applied to reads *and* writes. A
-  user without invoice access does not receive contract values, GST fields or
-  invoices at all — the fields are absent from the payload, not merely unstyled —
-  and cannot edit contract money through the client endpoint either.
+  time. Login answers identically for a wrong password and an unknown address —
+  and does the same amount of hashing either way, against a dummy hash when the
+  address is unknown, so response timing cannot be used to enumerate accounts
+  either. An account with no password (Google-only) can never be signed into with
+  one, whatever is supplied.
+- **Per-section access is default-deny** and applied to reads *and* writes.
+  Crucially, the snapshot redacts **every** collection, not just money: contacts,
+  invoices, deliverables, documents, tasks and the activity feed are each omitted
+  unless the corresponding section is granted, and money fields are absent from
+  the payload rather than merely unstyled. Guarding an endpoint with
+  `requireSection` achieves nothing if the snapshot ships the same rows anyway, so
+  the two are kept in agreement and tested together.
+- **Overview access is a dashboard, not a master key.** It grants the client
+  roster for the stats and feeds; opening an account's detail needs Clients
+  access.
 - **Viewers are read-only**, enforced on every mutating route. The UI hides write
   affordances to match, and the client refuses the action locally too rather than
   firing a request it knows will fail.
@@ -201,6 +216,10 @@ where it counts:
 - **First-run setup is a bootstrap, not sign-up.** `POST /api/auth/setup` works
   only while the workspace has zero accounts and always creates an Owner; once
   one exists it returns 409 forever. Everything after that is invite-by-Owner.
+  The emptiness check and the insert are a single transaction, so two
+  simultaneous requests cannot both create an Owner. `SETUP_TOKEN` gates the
+  endpoint with a one-time code, compared in constant time, and is mandatory
+  under `NODE_ENV=production`.
 - **Password changes require the current password** and delete every other
   session for that user, so a borrowed session cannot be used to take an account
   over. Read-only accounts can still change their own password — that is a login
@@ -221,9 +240,19 @@ where it counts:
 - **Google accounts are linked by subject, not address.** The stable `sub` is
   stored on first use, so a later Google email change follows the same account
   rather than creating a second one.
-- **Uploads** are limited to 10 MB and a vetted type list, stored under generated
-  UUID filenames (a path-traversal filename cannot survive), and served only to
-  signed-in users.
+- **Uploads** are validated by their actual bytes, not the `Content-Type` the
+  client supplied or the extension in its filename — both of which the client
+  chooses. A claim the bytes contradict is refused rather than quietly re-labelled.
+  Files are stored under generated UUID names (a traversal filename cannot
+  survive), and every upload is an owned record: **downloads are authorized
+  against the client the file belongs to**, because knowing a URL is not
+  authorization. Non-images are served `Content-Disposition: attachment` with
+  `X-Content-Type-Options: nosniff`. Per-request, per-account and per-workspace
+  size limits keep one person from filling the disk, and `npm run uploads:gc`
+  removes files nothing references any more.
+- **Invoices cannot be overpaid.** A payment larger than the outstanding balance
+  is refused, so the balance can never go negative — credits and refunds would
+  need their own accounting rather than an overflowing invoice.
 - All input is validated with Zod; SQL goes through prepared statements only.
 
 ## Decisions worth knowing
@@ -309,7 +338,7 @@ Honest list, in the order I would tackle them:
 
 ## Verified
 
-`npm run typecheck`, `npm run build` and `npm test` (57 tests) all pass.
+`npm run typecheck`, `npm run build` and `npm test` (86 tests) all pass.
 
 The real-account path was driven in a browser against an empty database: setup
 appears instead of a sign-in form, rejects a short password and a mismatched

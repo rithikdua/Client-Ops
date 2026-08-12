@@ -35,7 +35,7 @@ function DetailField({ label, value }: { label: string; value: string }) {
 }
 
 export function OverviewTab({ client }: { client: Client }) {
-  const { showInvoiceStats } = useAccess();
+  const { showInvoiceStats, access } = useAccess();
 
   const openDeliverables = client.deliverables.filter((d) => d.status !== 'Done').length;
   const openTasks = client.tasks.filter((t) => t.status !== 'Done').length;
@@ -59,7 +59,11 @@ export function OverviewTab({ client }: { client: Client }) {
     (client.gstPercent || 0) +
     (client.gstMode === 'included' ? '%, included in base)' : '%, added on top)');
 
-  const statsCols = showInvoiceStats ? 'repeat(5,minmax(0,1fr))' : 'repeat(4,minmax(0,1fr))';
+  const showDeliverables = !!access.deliverables;
+  const showDocuments = !!access.documents;
+  const cardCount =
+    2 + (showInvoiceStats ? 1 : 0) + (showDeliverables ? 1 : 0) + (showDocuments ? 1 : 0);
+  const statsCols = `repeat(${cardCount},minmax(0,1fr))`;
 
   return (
     <>
@@ -68,8 +72,13 @@ export function OverviewTab({ client }: { client: Client }) {
         {showInvoiceStats && (
           <CountCard label="Invoices · unpaid" value={`${pendingInvoices} / ${client.invoices.length}`} />
         )}
-        <CountCard label="Deliverables · open" value={`${openDeliverables} / ${client.deliverables.length}`} />
-        <CountCard label="Documents on file" value={client.documents.length} />
+        {showDeliverables && (
+          <CountCard
+            label="Deliverables · open"
+            value={`${openDeliverables} / ${client.deliverables.length}`}
+          />
+        )}
+        {showDocuments && <CountCard label="Documents on file" value={client.documents.length} />}
         <CountCard label="Open to-dos" value={openTasks} />
       </div>
 

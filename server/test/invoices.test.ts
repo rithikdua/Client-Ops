@@ -30,7 +30,9 @@ test('part-payments accumulate to Paid without floating-point drift', () => {
   assert.equal(balanceMinor(10000, payments), 0);
 });
 
-test('overpayment reads as Paid and reports a negative balance', () => {
+test('the maths still describes an overpaid invoice, which the API refuses to create', () => {
+  // balanceMinor is pure arithmetic and reports the overshoot honestly; the
+  // payments endpoint is what prevents this state from arising (see api.test.ts).
   const payments = [payment(2500000)];
   assert.equal(statusOf(2400000, payments), 'Paid');
   assert.equal(balanceMinor(2400000, payments), -100000);

@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url';
 
 const here = dirname(fileURLToPath(import.meta.url));
 
-export const SCHEMA_VERSION = 2;
+export const SCHEMA_VERSION = 3;
 
 /** Absolute path to the SQLite file. Override with DATABASE_PATH. */
 export const DB_PATH =
@@ -48,6 +48,24 @@ export function openDb(path: string = DB_PATH): Db {
  * existing table has to be applied here too.
  */
 function migrate(db: Db, from: number): void {
+  if (from < 3) {
+    // v3: uploads become owned records so downloads can be authorized.
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS uploads (
+        id            TEXT PRIMARY KEY,
+        filename      TEXT NOT NULL UNIQUE,
+        original_name TEXT NOT NULL DEFAULT '',
+        mime          TEXT NOT NULL,
+        size_bytes    INTEGER NOT NULL,
+        client_id     TEXT REFERENCES clients(id) ON DELETE CASCADE,
+        section       TEXT NOT NULL DEFAULT 'clients',
+        uploaded_by   TEXT REFERENCES users(id) ON DELETE SET NULL,
+        created_at    TEXT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_uploads_client ON uploads(client_id);
+      CREATE INDEX IF NOT EXISTS idx_uploads_uploader ON uploads(uploaded_by);
+    `);
+  }
   if (from < 2) {
     // v2: Google sign-in. `google_sub` links a Google identity to an account.
     const columns = db.prepare('PRAGMA table_info(users)').all() as { name: string }[];

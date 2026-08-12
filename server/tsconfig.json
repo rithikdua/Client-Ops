@@ -1,10 +1,14 @@
 {
   "compilerOptions": {
     "target": "ES2022",
-    "lib": ["ES2022"],
+    "lib": [
+      "ES2022"
+    ],
     "module": "ESNext",
     "moduleResolution": "bundler",
-    "types": ["node"],
+    "types": [
+      "node"
+    ],
     "strict": true,
     "noUnusedLocals": true,
     "noUnusedParameters": true,
@@ -15,5 +19,10 @@
     "noEmit": true,
     "allowImportingTsExtensions": false
   },
-  "include": ["src", "test", "../src/data"]
+  "include": [
+    "src",
+    "test",
+    "../src/data",
+    "../src/lib/urls.ts"
+  ]
 }

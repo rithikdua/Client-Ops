@@ -11,16 +11,41 @@ import {
   STAGE_OPTIONS,
   TASK_STATUS_OPTIONS,
 } from '../../../src/data/options';
+import { isSafeUrl, UNSAFE_URL_MESSAGE } from '../../../src/lib/urls';
 
 const enumOf = <T extends string>(values: readonly T[]) => z.enum(values as unknown as [T, ...T[]]);
 
-/** Calendar day, `YYYY-MM-DD`. */
-export const isoDate = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Expected a YYYY-MM-DD date.');
+/**
+ * A real calendar day, `YYYY-MM-DD`. The shape check alone would accept
+ * 2026-99-99 and 2026-02-31, so the parsed date has to round-trip back to the
+ * same string.
+ */
+export const isoDate = z
+  .string()
+  .regex(/^\d{4}-\d{2}-\d{2}$/, 'Expected a YYYY-MM-DD date.')
+  .refine(
+    (v) => {
+      const parsed = new Date(v + 'T00:00:00Z');
+      // toISOString() throws on an Invalid Date, which would surface as a 500,
+      // so check the timestamp before formatting it.
+      if (Number.isNaN(parsed.getTime())) return false;
+      return parsed.toISOString().slice(0, 10) === v;
+    },
+    { message: 'That is not a real date.' },
+  );
 const optionalDate = z.union([isoDate, z.literal('')]).optional();
 
 /** Money arrives as whole currency units and is converted to minor units. */
 const majorAmount = z.number().finite().min(0).max(1_000_000_000);
 const text = (max = 500) => z.string().trim().max(max);
+
+/**
+ * A link we are willing to store. Refusing `javascript:` and friends here keeps
+ * the database clean; the UI refuses to render them too, so an older row cannot
+ * become a stored-XSS payload either.
+ */
+const linkUrl = (max = 2000) =>
+  text(max).refine((v) => v === '' || isSafeUrl(v), { message: UNSAFE_URL_MESSAGE });
 
 export const gstMode = z.enum(['excluded', 'included']);
 export const currency = z.enum(['USD', 'INR', 'EUR', 'GBP', 'AED']);
@@ -45,7 +70,7 @@ export const clientSchema = z.object({
   onboardingDate: optionalDate,
   contractEndDate: optionalDate,
   paymentTerms: enumOf(PAYMENT_TERMS_OPTIONS).default('Net 30'),
-  website: text(300).default(''),
+  website: linkUrl(300).default(''),
   notes: text(4000).default(''),
   legalName: text(300).default(''),
   gstin: text(30).default(''),
@@ -89,7 +114,7 @@ export const invoiceSchema = z.object({
   issueDate: isoDate,
   dueDate: isoDate,
   fileName: text(300).default(''),
-  fileUrl: text(2000).default(''),
+  fileUrl: linkUrl().default(''),
 });
 
 export const paymentSchema = z
@@ -104,7 +129,7 @@ export const paymentSchema = z
 
 export const fileSchema = z.object({
   fileName: text(300).default(''),
-  fileUrl: text(2000).default(''),
+  fileUrl: linkUrl().default(''),
 });
 
 export const deliverableSchema = z.object({
@@ -114,25 +139,25 @@ export const deliverableSchema = z.object({
   dueDate: isoDate,
   status: enumOf(DELIVERABLE_STATUS_OPTIONS).default('Not started'),
   fileName: text(300).default(''),
-  fileUrl: text(2000).default(''),
+  fileUrl: linkUrl().default(''),
 });
 
 export const deliverablePatchSchema = z.object({
   status: enumOf(DELIVERABLE_STATUS_OPTIONS).optional(),
   fileName: text(300).optional(),
-  fileUrl: text(2000).optional(),
+  fileUrl: linkUrl().optional(),
 });
 
 export const documentSchema = z.object({
   name: text(300).min(1, 'A document name is required.'),
   type: enumOf(DOCUMENT_TYPE_OPTIONS),
-  url: text(2000).default(''),
+  url: linkUrl().default(''),
   source: z.enum(['us', 'client']).default('us'),
 });
 
 export const activitySchema = z.object({
   note: text(4000).min(1, 'A note is required.'),
-  author: text(120).default(''),
+  // No `author`: the server records whoever is signed in.
 });
 
 export const taskSchema = z.object({
@@ -142,7 +167,7 @@ export const taskSchema = z.object({
   status: enumOf(TASK_STATUS_OPTIONS).default('New'),
   priority: enumOf(PRIORITY_OPTIONS).default('Medium'),
   dueDate: optionalDate,
-  attachments: z.array(text(2000)).max(20).default([]),
+  attachments: z.array(linkUrl()).max(20).default([]),
 });
 
 export const taskPatchSchema = taskSchema.partial();
@@ -183,6 +208,8 @@ export const setupSchema = z.object({
   email: z.string().trim().toLowerCase().email(),
   role: text(200).default(''),
   password: z.string().min(8, 'Use at least 8 characters.').max(200),
+  /** Required when the server sets SETUP_TOKEN. */
+  setupToken: z.string().max(200).default(''),
 });
 
 export const changePasswordSchema = z.object({

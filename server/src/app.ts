@@ -14,7 +14,7 @@ import { followUpRoutes } from './routes/followups';
 import { invoiceRoutes } from './routes/invoices';
 import { taskRoutes } from './routes/tasks';
 import { teamRoutes } from './routes/team';
-import { UPLOAD_DIR, uploadRoutes } from './routes/uploads';
+import { uploadDownloadRoutes, uploadRoutes } from './routes/uploads';
 
 export function createApp(db: Db): Express {
   const app = express();
@@ -42,9 +42,9 @@ export function createApp(db: Db): Express {
 
   app.use('/api/auth', authRoutes(db));
 
-  // Uploaded files are private to signed-in users.
-  app.use('/api/uploads', requireAuth, express.static(UPLOAD_DIR, { index: false, dotfiles: 'deny' }));
-  app.use('/api/uploads', uploadRoutes());
+  // Downloads are authorized per file against the account it belongs to — a URL
+  // is not a capability. Uploading happens under the client it belongs to.
+  app.use('/api/uploads', uploadDownloadRoutes(db));
 
   app.use('/api/clients', requireAuth, clientRoutes(db));
   app.use('/api/clients/:clientId/contacts', requireAuth, contactRoutes(db));
@@ -53,6 +53,7 @@ export function createApp(db: Db): Express {
   app.use('/api/clients/:clientId/documents', requireAuth, documentRoutes(db));
   app.use('/api/clients/:clientId/activity', requireAuth, activityRoutes(db));
   app.use('/api/clients/:clientId/tasks', requireAuth, taskRoutes(db));
+  app.use('/api/clients/:clientId/uploads', requireAuth, uploadRoutes(db));
   app.use('/api/contacts', requireAuth, globalContactRoutes(db));
   app.use('/api/team', requireAuth, teamRoutes(db));
   app.use('/api/followups', requireAuth, followUpRoutes(db));

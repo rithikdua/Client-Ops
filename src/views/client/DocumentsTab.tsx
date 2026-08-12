@@ -4,6 +4,7 @@ import { Button } from '../../ds/Button';
 import { Chip } from '../../ds/Chip';
 import { Icon, TrashButton } from '../../ds/Icon';
 import { fmtDate } from '../../lib/dates';
+import { safeHref } from '../../lib/urls';
 import { useAccess } from '../../state/access';
 import { useApp } from '../../state/AppState';
 
@@ -35,16 +36,16 @@ export function DocumentsTab({ client }: { client: Client }) {
             style={{ display: 'grid', gridTemplateColumns: GRID, columnGap: 12 }}
           >
             <a
-              href={doc.url || undefined}
+              href={safeHref(doc.url)}
               target="_blank"
-              rel="noreferrer"
+              rel="noreferrer noopener"
               style={{
                 display: 'flex',
                 alignItems: 'center',
                 gap: 8,
                 minWidth: 0,
-                color: doc.url ? 'var(--phot-purple)' : 'var(--ink-1)',
-                cursor: doc.url ? 'pointer' : 'default',
+                color: safeHref(doc.url) ? 'var(--phot-purple)' : 'var(--ink-1)',
+                cursor: safeHref(doc.url) ? 'pointer' : 'default',
                 textDecoration: 'none',
               }}
             >

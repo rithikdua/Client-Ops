@@ -5,7 +5,7 @@ import { logSystemActivity, todayISO } from '../domain/activity';
 import { buildSnapshot } from '../domain/snapshot';
 import { HttpError, notFound } from '../http/errors';
 import { clientPatchSchema, clientSchema } from '../http/validate';
-import { gstBreakdown, toMinor } from '../money';
+import { fromMinor, gstBreakdown, toMinor } from '../money';
 
 /** Fails the request unless the client exists. */
 export function assertClient(db: Db, clientId: string): void {
@@ -19,23 +19,57 @@ export function snapshotFor(db: Db, req: Request) {
 
 type ClientInput = ReturnType<typeof clientSchema.parse>;
 
-/** Contract money is stored pre-computed so reads never re-derive GST. */
-function contractColumns(input: {
+/** The three inputs that decide a contract's value. */
+interface MoneyInput {
   baseAmount?: number;
   gstPercent?: number;
   gstMode?: 'excluded' | 'included';
-}) {
-  const { base, gst, total } = gstBreakdown(
-    toMinor(input.baseAmount ?? 0),
-    input.gstPercent ?? 0,
-    input.gstMode ?? 'excluded',
+}
+
+/** Any of these arriving means the request is changing money. */
+function touchesMoney(input: MoneyInput): boolean {
+  return (
+    input.baseAmount !== undefined ||
+    input.gstPercent !== undefined ||
+    input.gstMode !== undefined
   );
+}
+
+/**
+ * Contract money is stored pre-computed so reads never re-derive GST.
+ *
+ * `existing` must be supplied on an update. A PATCH may carry only one of the
+ * three fields, and defaulting the others to zero would silently rewrite a
+ * ten-lakh contract to nothing: `{ "gstPercent": 12 }` alone used to recalculate
+ * from a base of 0. Anything the caller omits is taken from the stored row.
+ */
+function contractColumns(input: MoneyInput, existing?: MoneyInput) {
+  const baseAmount = input.baseAmount ?? existing?.baseAmount ?? 0;
+  const gstPercent = input.gstPercent ?? existing?.gstPercent ?? 0;
+  const gstMode = input.gstMode ?? existing?.gstMode ?? 'excluded';
+
+  const { base, gst, total } = gstBreakdown(toMinor(baseAmount), gstPercent, gstMode);
   return {
     contract_value_minor: total,
     base_amount_minor: base,
-    gst_percent: input.gstPercent ?? 0,
+    gst_percent: gstPercent,
     gst_amount_minor: gst,
-    gst_mode: input.gstMode ?? 'excluded',
+    gst_mode: gstMode,
+  };
+}
+
+/** Reads the stored money back as whole currency units, for merging. */
+function storedMoney(db: Db, clientId: string): MoneyInput {
+  const row = db
+    .prepare('SELECT base_amount_minor, gst_percent, gst_mode FROM clients WHERE id = ?')
+    .get(clientId) as
+    | { base_amount_minor: number | null; gst_percent: number | null; gst_mode: string | null }
+    | undefined;
+  if (!row) throw notFound('Client');
+  return {
+    baseAmount: fromMinor(row.base_amount_minor ?? 0),
+    gstPercent: row.gst_percent ?? 0,
+    gstMode: row.gst_mode === 'included' ? 'included' : 'excluded',
   };
 }
 
@@ -43,10 +77,10 @@ export function clientRoutes(db: Db): Router {
   const router = Router();
 
   // Editing money requires invoice access on top of write permission, so a
-  // teammate who cannot see contract values cannot change them either.
-  const requireMoneyAccess = (req: Request, input: { baseAmount?: number; gstPercent?: number }) => {
-    const touchesMoney = input.baseAmount !== undefined || input.gstPercent !== undefined;
-    if (touchesMoney && !req.actor!.access.invoices) {
+  // teammate who cannot see contract values cannot change them either. gstMode
+  // counts: on its own it still triggers a recalculation of the contract value.
+  const requireMoneyAccess = (req: Request, input: MoneyInput) => {
+    if (touchesMoney(input) && !req.actor!.access.invoices) {
       throw new HttpError(403, 'You do not have access to contract values.');
     }
   };
@@ -164,8 +198,8 @@ export function clientRoutes(db: Db): Router {
     if (input.mandateType !== undefined) {
       columns.mandate_other = input.mandateType === 'Other' ? (input.mandateOther ?? '') : '';
     }
-    if (input.baseAmount !== undefined || input.gstPercent !== undefined || input.gstMode !== undefined) {
-      Object.assign(columns, contractColumns(input));
+    if (touchesMoney(input)) {
+      Object.assign(columns, contractColumns(input, storedMoney(db, clientId)));
     }
     if (Object.keys(columns).length === 0) throw new HttpError(400, 'Nothing to update.');
 

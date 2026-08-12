@@ -3,7 +3,7 @@ import { requireSection, requireWrite } from '../auth/permissions';
 import { newId, transact, type Db } from '../db/index';
 import { logSystemActivity } from '../domain/activity';
 import { balanceMinor, type PaymentLike } from '../domain/invoices';
-import { notFound } from '../http/errors';
+import { HttpError, notFound } from '../http/errors';
 import { fileSchema, invoiceSchema, paymentSchema } from '../http/validate';
 import { gstBreakdown, toMinor } from '../money';
 import { assertClient, snapshotFor } from './clients';
@@ -99,6 +99,20 @@ export function invoiceRoutes(db: Db): Router {
     const { clientId, invoiceId } = req.params as { clientId: string; invoiceId: string };
     const invoice = loadInvoice(db, clientId, invoiceId);
     const input = paymentSchema.parse(req.body);
+
+    // Refuse to settle more than is owed. Allowing it produced a negative
+    // balance, which is not a state the rest of the app has any meaning for —
+    // credits and refunds need their own accounting, not an overflowing invoice.
+    const settled = toMinor(input.bankAmount) + toMinor(input.tds);
+    const balance = balanceMinor(invoice.amount_minor, paymentsOf(db, invoiceId));
+    if (settled > balance) {
+      throw new HttpError(
+        400,
+        balance <= 0
+          ? 'This invoice is already settled in full.'
+          : 'That is more than the amount still outstanding on this invoice.',
+      );
+    }
 
     transact(db, () => {
       db.prepare(

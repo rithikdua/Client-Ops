@@ -15,7 +15,8 @@
     "test": "tsx --test server/test/*.test.ts",
     "db:reset": "tsx server/scripts/reset.ts",
     "create-user": "tsx server/scripts/create-user.ts",
-    "db:demo": "tsx server/scripts/reset.ts --demo"
+    "db:demo": "tsx server/scripts/reset.ts --demo",
+    "uploads:gc": "tsx server/scripts/gc-uploads.ts"
   },
   "dependencies": {
     "better-sqlite3": "^13.0.3",

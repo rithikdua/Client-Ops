@@ -38,8 +38,14 @@ export function useAccess(): AccessInfo {
     banner: me?.previewAs
       ? { name: me.previewAs.name, role: me.previewAs.role, summary: me.previewAs.summary }
       : null,
-    visibleClientTabs: ALL_CLIENT_TABS.filter(
-      (id) => (id !== 'invoices' || access.invoices) && (id !== 'documents' || access.documents),
-    ),
+    // A tab is only offered when the server would actually send its data.
+    visibleClientTabs: ALL_CLIENT_TABS.filter((id) => {
+      if (id === 'invoices') return !!access.invoices;
+      if (id === 'documents') return !!access.documents;
+      if (id === 'deliverables') return !!access.deliverables;
+      // Contacts, tasks and activity live inside the client record.
+      if (id === 'contacts' || id === 'tasks' || id === 'activity') return !!access.clients;
+      return true;
+    }),
   };
 }

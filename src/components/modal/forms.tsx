@@ -329,7 +329,10 @@ export function ActivityForm() {
   const { state } = useApp();
   return (
     <>
-      <SelectField label="Logged by" k="author" options={state.team.map((t) => t.name)} />
+      {/* The server records whoever is signed in, so this is shown, not chosen. */}
+      <div style={{ fontSize: 13, color: 'var(--ink-3)' }}>
+        Logged by <strong style={{ color: 'var(--ink-2)' }}>{state.me?.name ?? 'you'}</strong>
+      </div>
       <TextAreaField label="Note" k="note" rows={4} />
     </>
   );
