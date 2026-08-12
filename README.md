@@ -92,7 +92,7 @@ model working. Demo data is never loaded automatically; set `SEED_DEMO_DATA=1` i
 you want the server to load it on an empty database at boot.
 
 ```bash
-npm test           # 86 server tests (node:test)
+npm test           # 97 server tests (node:test)
 npm run typecheck  # both tsconfigs
 npm run build      # typecheck + production web build
 npm start          # production API (NODE_ENV=production)
@@ -228,6 +228,16 @@ where it counts:
 - **Preview-as is recorded on the session**, so while an Owner previews Daniel,
   the Owner's *own* requests are evaluated as Daniel — including being refused
   invoice data, and becoming read-only while previewing a Viewer.
+- **Authentication endpoints are rate limited.** Login, first-run setup, the
+  Google callback and password change are throttled on two counters that must
+  both be clear: per-account and per-IP. Per-account alone is defeated by
+  spreading guesses across addresses; per-IP alone is defeated by a distributed
+  attack. Blocks escalate (30s, doubling) and are capped at 15 minutes so a
+  locked-out colleague is inconvenienced rather than stranded, and the 429 is
+  identical whether or not the account exists. Counters live in process memory,
+  which is correct for one instance and must move to a shared store behind a load
+  balancer. `X-Forwarded-For` is only honoured when `TRUST_PROXY` is set, because
+  a header the client controls would make per-IP limiting meaningless.
 - **Google sign-in** uses the authorization-code flow with PKCE. The `state`
   parameter, the OIDC `nonce` and the PKCE verifier travel in a signed, httpOnly,
   ten-minute cookie, so a forged or replayed callback is rejected before any
@@ -325,9 +335,7 @@ Honest list, in the order I would tackle them:
    the account) or via the CLI — there is no email delivery wired up, so no reset
    link and no invitation mail. An Owner sets a temporary password and passes it
    on out of band.
-5. **No pagination or rate limiting.** Both are fine at seed scale and neither is
-   safe at real scale. Sign-in and Google callback are the endpoints most worth
-   rate limiting first.
+5. **No pagination.** Fine at seed scale, not at real scale.
 6. **Google sign-in has not been run against real Google credentials.** Every
    step around it is tested, but the live token exchange needs a Google Cloud
    OAuth client, which I cannot create. Expect to hit at most a redirect-URI

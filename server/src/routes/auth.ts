@@ -1,5 +1,5 @@
 import { timingSafeEqual } from 'node:crypto';
-import { Router } from 'express';
+import { Router, type Request } from 'express';
 import { changePassword, claimFirstOwner, needsSetup, setupToken } from '../auth/accounts';
 import {
   exchangeCode,
@@ -28,6 +28,7 @@ import { hashPassword, verifyPassword } from '../auth/passwords';
 import type { Db } from '../db/index';
 import { buildSnapshot } from '../domain/snapshot';
 import { asyncRoute, HttpError } from '../http/errors';
+import { clientIp, IP_POLICY, LOGIN_POLICY, RateLimiter } from '../http/rateLimit';
 import { changePasswordSchema, loginSchema, previewSchema, setupSchema } from '../http/validate';
 
 /**
@@ -41,6 +42,39 @@ const { hash: DUMMY_HASH, salt: DUMMY_SALT } = hashPassword(
 
 export function authRoutes(db: Db): Router {
   const router = Router();
+
+  // Two counters, both of which must be clear. Per-account alone lets an attacker
+  // spread guesses across many addresses from one machine; per-IP alone is
+  // defeated by a distributed attack. Neither is sufficient by itself.
+  const perAccount = new RateLimiter(LOGIN_POLICY);
+  const perIp = new RateLimiter(IP_POLICY);
+
+  /**
+   * Refuses the request when either counter is blocked. The same 429 is returned
+   * whether or not the account exists, so this cannot be used to enumerate.
+   */
+  const enforceLimit = (req: Request, accountKey: string) => {
+    const ip = clientIp(req);
+    const wait = Math.max(perIp.retryAfter('ip:' + ip), perAccount.retryAfter(accountKey));
+    if (wait > 0) {
+      throw new HttpError(429, `Too many attempts. Try again in ${wait} second(s).`, {
+        retryAfter: wait,
+      });
+    }
+  };
+
+  const recordFailure = (req: Request, accountKey: string) => {
+    perIp.recordFailure('ip:' + clientIp(req));
+    perAccount.recordFailure(accountKey);
+    // Cheap housekeeping; the maps only grow while an attack is in progress.
+    perIp.prune();
+    perAccount.prune();
+  };
+
+  const clearLimit = (req: Request, accountKey: string) => {
+    perIp.reset('ip:' + clientIp(req));
+    perAccount.reset(accountKey);
+  };
 
   /** Public: lets the sign-in screen offer first-run setup and Google. */
   router.get('/status', (_req, res) => {
@@ -79,6 +113,9 @@ export function authRoutes(db: Db): Router {
 
       const config = googleConfig();
       if (!config) return fail('Google sign-in is not configured on this server.');
+      if (perIp.retryAfter('ip:' + clientIp(req)) > 0) {
+        return fail('Too many sign-in attempts. Please wait a moment and try again.');
+      }
 
       const pending = readSignedPayload<PendingAuth>(req.cookies?.[OAUTH_COOKIE]);
       res.clearCookie(OAUTH_COOKIE, { ...oauthCookieOptions(), maxAge: undefined });
@@ -101,6 +138,7 @@ export function authRoutes(db: Db): Router {
         res.cookie(SESSION_COOKIE, serializeCookie(sessionId), cookieOptions());
         res.redirect('/');
       } catch (err) {
+        recordFailure(req, 'google');
         return fail(err instanceof HttpError ? err.message : 'Google sign-in failed.');
       }
     }),
@@ -122,6 +160,8 @@ export function authRoutes(db: Db): Router {
   router.post('/setup', (req, res) => {
     const input = setupSchema.parse(req.body);
     const required = setupToken();
+    // The setup code is a secret too, so guessing it is throttled per IP.
+    enforceLimit(req, 'setup');
 
     if (!required && process.env.NODE_ENV === 'production') {
       throw new HttpError(
@@ -133,7 +173,10 @@ export function authRoutes(db: Db): Router {
       const provided = Buffer.from(input.setupToken);
       const expected = Buffer.from(required);
       const ok = provided.length === expected.length && timingSafeEqual(provided, expected);
-      if (!ok) throw new HttpError(403, 'That setup code is not correct.');
+      if (!ok) {
+        recordFailure(req, 'setup');
+        throw new HttpError(403, 'That setup code is not correct.');
+      }
     }
 
     const id = claimFirstOwner(db, {
@@ -151,6 +194,9 @@ export function authRoutes(db: Db): Router {
 
   router.post('/login', (req, res) => {
     const { email, password } = loginSchema.parse(req.body);
+    const accountKey = 'email:' + email;
+    enforceLimit(req, accountKey);
+
     const user = db
       .prepare('SELECT id, password_hash, password_salt FROM users WHERE email = ?')
       .get(email) as { id: string; password_hash: string; password_salt: string } | undefined;
@@ -165,8 +211,10 @@ export function authRoutes(db: Db): Router {
       user && user.password_hash ? user.password_salt : DUMMY_SALT,
     );
     if (!user || !user.password_hash || !ok) {
+      recordFailure(req, accountKey);
       throw new HttpError(401, 'Email or password is incorrect.');
     }
+    clearLimit(req, accountKey);
 
     const sessionId = createSession(db, user.id);
     res.cookie(SESSION_COOKIE, serializeCookie(sessionId), cookieOptions());
@@ -195,7 +243,17 @@ export function authRoutes(db: Db): Router {
       throw new HttpError(400, 'Exit the preview before changing your password.');
     }
     const input = changePasswordSchema.parse(req.body);
-    changePassword(db, req.actor!.userId, input.currentPassword, input.newPassword);
+    const accountKey = 'password:' + req.actor!.userId;
+    enforceLimit(req, accountKey);
+    try {
+      changePassword(db, req.actor!.userId, input.currentPassword, input.newPassword);
+    } catch (err) {
+      // Only a wrong current password counts as a guess; a weak new password is
+      // the user's own mistake and should not lock them out.
+      if (err instanceof HttpError && err.status === 403) recordFailure(req, accountKey);
+      throw err;
+    }
+    clearLimit(req, accountKey);
 
     // Every session was just invalidated, including this one — issue a new one
     // so the person who made the change stays signed in.

@@ -1117,3 +1117,83 @@ describe('an invoice cannot be overpaid (H-06)', () => {
     }
   });
 });
+
+/**
+ * Keep this suite LAST. It deliberately trips the per-IP limiter, which is shared
+ * by every request in this process, so anything signing in afterwards would get a
+ * 429 that has nothing to do with what it was testing.
+ */
+describe('brute force is throttled (H-01)', () => {
+  test('repeated wrong passwords eventually get 429 with Retry-After', async () => {
+    const email = 'throttle-target@phot.ai';
+    const created = await call('POST', '/api/team', {
+      session: owner,
+      body: { name: 'Throttle', email, permission: 'Viewer', password: 'password-1234' },
+    });
+    assert.equal(created.status, 201);
+
+    let sawTooMany = false;
+    let retryAfter = '';
+    for (let i = 0; i < 12; i++) {
+      const res = await fetch(`${base}/api/auth/login`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ email, password: `wrong-${i}` }),
+      });
+      if (res.status === 429) {
+        sawTooMany = true;
+        retryAfter = res.headers.get('retry-after') ?? '';
+        break;
+      }
+      assert.equal(res.status, 401, 'before the limit, a wrong password is just a 401');
+    }
+
+    assert.ok(sawTooMany, 'guessing must eventually be refused outright');
+    assert.match(retryAfter, /^\d+$/, 'Retry-After tells the client how long to wait');
+
+    // The correct password is refused too while the block holds — that is the
+    // point, and it is why the block is time-limited rather than permanent.
+    const evenWithTheRightPassword = await call('POST', '/api/auth/login', {
+      body: { email, password: 'password-1234' },
+    });
+    assert.equal(evenWithTheRightPassword.status, 429);
+  });
+
+  test('throttling reveals nothing about whether an account exists', async () => {
+    const hammer = async (email: string) => {
+      let status = 0;
+      for (let i = 0; i < 12; i++) {
+        const res = await call('POST', '/api/auth/login', { body: { email, password: `x-${i}` } });
+        status = res.status;
+        if (status === 429) break;
+      }
+      return status;
+    };
+    // Two addresses, one real and one not: both end up throttled the same way.
+    assert.equal(await hammer('maya@phot.ai'), 429);
+    assert.equal(await hammer('definitely-not-a-user@phot.ai'), 429);
+  });
+
+  test('a wrong current password on the change-password endpoint is throttled too', async () => {
+    const email = 'throttle-pw@phot.ai';
+    await call('POST', '/api/team', {
+      session: owner,
+      body: { name: 'PwThrottle', email, permission: 'Editor', password: 'password-1234' },
+    });
+    const session = await signIn(email, 'password-1234');
+
+    let sawTooMany = false;
+    for (let i = 0; i < 12; i++) {
+      const res = await call('POST', '/api/auth/password', {
+        session,
+        body: { currentPassword: `wrong-${i}`, newPassword: 'a-new-password' },
+      });
+      if (res.status === 429) {
+        sawTooMany = true;
+        break;
+      }
+      assert.equal(res.status, 403);
+    }
+    assert.ok(sawTooMany, 'guessing the current password must be throttled');
+  });
+});
