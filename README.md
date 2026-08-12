@@ -198,10 +198,16 @@ where it counts:
   address is unknown, so response timing cannot be used to enumerate accounts
   either. An account with no password (Google-only) can never be signed into with
   one, whatever is supplied.
-- **Per-section access is default-deny** and applied to reads *and* writes. A
-  user without invoice access does not receive contract values, GST fields or
-  invoices at all — the fields are absent from the payload, not merely unstyled —
-  and cannot edit contract money through the client endpoint either.
+- **Per-section access is default-deny** and applied to reads *and* writes.
+  Crucially, the snapshot redacts **every** collection, not just money: contacts,
+  invoices, deliverables, documents, tasks and the activity feed are each omitted
+  unless the corresponding section is granted, and money fields are absent from
+  the payload rather than merely unstyled. Guarding an endpoint with
+  `requireSection` achieves nothing if the snapshot ships the same rows anyway, so
+  the two are kept in agreement and tested together.
+- **Overview access is a dashboard, not a master key.** It grants the client
+  roster for the stats and feeds; opening an account's detail needs Clients
+  access.
 - **Viewers are read-only**, enforced on every mutating route. The UI hides write
   affordances to match, and the client refuses the action locally too rather than
   firing a request it knows will fail.

@@ -889,3 +889,86 @@ describe('login does not leak which addresses exist (H-02)', () => {
     }
   });
 });
+
+describe('the snapshot withholds every denied section, not just money (C-03)', () => {
+  /** Signs in a purpose-made account with exactly the sections listed. */
+  async function userWith(sections: string[], label: string) {
+    const email = `${label}@phot.ai`;
+    const access: Record<string, boolean> = {};
+    for (const s of ['overview', 'clients', 'invoices', 'deliverables', 'documents', 'team', 'followups', 'phonebook'])
+      access[s] = sections.includes(s);
+    const created = await call('POST', '/api/team', {
+      session: owner,
+      body: { name: label, email, permission: 'Editor', password: 'password-1234', access },
+    });
+    assert.equal(created.status, 201, `could not create ${label}`);
+    return signIn(email, 'password-1234');
+  }
+
+  test('deliverables are absent for a user whose Deliverables section is denied', async () => {
+    const session = await userWith(['overview', 'clients'], 'no-deliverables');
+    const res = await call('GET', '/api/auth/session', { session });
+    assert.equal(res.body.me.access.deliverables, false);
+
+    const client = res.body.clients.find((c: any) => c.id === 'c1');
+    assert.deepEqual(client.deliverables, [], 'deliverables must not reach the browser');
+    // The endpoint was already guarded; the snapshot must agree with it.
+    assert.equal((await call('GET', '/api/clients', { session })).status, 200);
+    assert.equal(
+      (
+        await call('POST', '/api/clients/c1/deliverables', {
+          session,
+          body: { title: 'x', dueDate: '2026-09-01' },
+        })
+      ).status,
+      403,
+    );
+
+    // Sanity: the data does exist, the Owner still sees it.
+    const asOwner = await call('GET', '/api/auth/session', { session: owner });
+    assert.ok(
+      asOwner.body.clients.find((c: any) => c.id === 'c1').deliverables.length > 0,
+      'the fixture really has deliverables',
+    );
+  });
+
+  test('overview-only access is a dashboard, not a licence to read client detail', async () => {
+    const session = await userWith(['overview'], 'overview-only');
+    const res = await call('GET', '/api/auth/session', { session });
+    assert.equal(res.body.me.access.clients, false);
+
+    const client = res.body.clients.find((c: any) => c.id === 'c1');
+    assert.ok(client, 'the roster is still available for the dashboard');
+    for (const field of ['contacts', 'invoices', 'deliverables', 'documents', 'activity', 'tasks']) {
+      assert.deepEqual(client[field], [], `${field} must be withheld`);
+    }
+    assert.equal('contractValue' in client, false);
+  });
+
+  test('a user with everything still receives everything', async () => {
+    const res = await call('GET', '/api/auth/session', { session: owner });
+    const client = res.body.clients.find((c: any) => c.id === 'c1');
+    assert.ok(client.contacts.length > 0);
+    assert.ok(client.invoices.length > 0);
+    assert.ok(client.deliverables.length > 0);
+    assert.ok(client.documents.length > 0);
+    assert.ok(client.activity.length > 0);
+    assert.ok(client.tasks.length > 0);
+    assert.ok(typeof client.contractValue === 'number');
+  });
+
+  test('no client field leaks a section the user was denied', async () => {
+    const session = await userWith(['overview', 'clients', 'deliverables'], 'partial');
+    const res = await call('GET', '/api/auth/session', { session });
+    for (const client of res.body.clients) {
+      assert.deepEqual(client.invoices, [], 'invoices denied');
+      assert.deepEqual(client.documents, [], 'documents denied');
+      assert.equal('baseAmount' in client, false);
+      assert.equal('gstAmount' in client, false);
+      assert.equal('gstMode' in client, false);
+      assert.equal('gstPercent' in client, false);
+    }
+    assert.deepEqual(res.body.team, [], 'team denied');
+    assert.deepEqual(res.body.followUps, [], 'follow-ups denied');
+  });
+});

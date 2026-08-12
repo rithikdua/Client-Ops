@@ -10,7 +10,7 @@ import { useFollowUpRows } from '../state/derive';
 
 export function OverviewView() {
   const { state, actions } = useApp();
-  const { showInvoiceStats, canWrite } = useAccess();
+  const { showInvoiceStats, canWrite, access } = useAccess();
   const { pending: pendingFollowUps } = useFollowUpRows();
   const clients = state.clients;
 
@@ -60,7 +60,11 @@ export function OverviewView() {
     .sort((a, b) => b.date.localeCompare(a.date))
     .slice(0, 6);
 
-  const statsCols = showInvoiceStats ? 'repeat(4,minmax(0,1fr))' : 'repeat(3,minmax(0,1fr))';
+  // Cards are dropped, not zeroed, when their data is withheld.
+  const showDeliverables = !!access.deliverables;
+  const canOpenClients = !!access.clients;
+  const primaryCards = 2 + (showInvoiceStats ? 1 : 0) + (showDeliverables ? 1 : 0);
+  const statsCols = `repeat(${primaryCards},minmax(0,1fr))`;
   const secondaryCols = showInvoiceStats ? 'repeat(5,minmax(0,1fr))' : 'repeat(4,minmax(0,1fr))';
 
   return (
@@ -101,11 +105,13 @@ export function OverviewView() {
             }
           />
         )}
-        <StatCard
-          label="Deliverables due (14d)"
-          value={dueSoonCount}
-          chip={<Chip color={overdueDelCount > 0 ? 'red' : 'green'}>{overdueDelCount} overdue</Chip>}
-        />
+        {showDeliverables && (
+          <StatCard
+            label="Deliverables due (14d)"
+            value={dueSoonCount}
+            chip={<Chip color={overdueDelCount > 0 ? 'red' : 'green'}>{overdueDelCount} overdue</Chip>}
+          />
+        )}
       </div>
 
       <div style={{ display: 'grid', gridTemplateColumns: secondaryCols, gap: 16, marginTop: 16 }}>
@@ -131,11 +137,11 @@ export function OverviewView() {
             return (
               <div
                 key={x.c.id}
-                onClick={() => actions.openClient(x.c.id)}
+                onClick={canOpenClients ? () => actions.openClient(x.c.id) : undefined}
                 style={{
                   padding: 'var(--row-pad)',
                   borderBottom: '1px solid var(--border-2)',
-                  cursor: 'pointer',
+                  cursor: canOpenClients ? 'pointer' : 'default',
                 }}
               >
                 <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>

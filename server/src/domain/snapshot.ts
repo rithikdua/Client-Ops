@@ -212,6 +212,15 @@ function loadTasks(db: Db, clientId: string): Task[] {
 
 /* -- assembly ------------------------------------------------------------ */
 
+/**
+ * Turns a row into the client object this user is allowed to see.
+ *
+ * Every collection is gated, not just the money. Sending deliverables to someone
+ * whose Deliverables section is denied is a server-side authorization failure
+ * even if the UI never draws them — the data is already in their browser, one
+ * devtools tab away. The per-endpoint `requireSection` guards are useless if the
+ * snapshot hands the same rows over anyway.
+ */
 function toClient(db: Db, row: ClientRow, access: Access): Client {
   const base: Client = {
     id: row.id,
@@ -235,17 +244,24 @@ function toClient(db: Db, row: ClientRow, access: Access): Client {
     mandateType: row.mandate_type ?? 'Pilot',
     mandateOther: orEmpty(row.mandate_other),
     scopeOfWork: orEmpty(row.scope_of_work),
-    contacts: loadContacts(db, row.id),
-    deliverables: loadDeliverables(db, row.id),
-    activity: loadActivity(db, row.id),
-    tasks: loadTasks(db, row.id),
-    // Filled in below, subject to access.
+    // Every collection below is filled in only if the section allows it.
+    contacts: [],
     invoices: [],
+    deliverables: [],
     documents: [],
+    activity: [],
+    tasks: [],
   };
 
-  // Money is withheld entirely from anyone without invoice access — this is the
-  // server-side half of what the UI hides.
+  // Contacts, tasks and the activity feed live inside the client record, so they
+  // follow Clients access. Overview access alone is a dashboard, not a licence to
+  // read every account's detail.
+  if (access.clients) {
+    base.contacts = loadContacts(db, row.id);
+    base.tasks = loadTasks(db, row.id);
+    base.activity = loadActivity(db, row.id);
+  }
+  // Money is withheld entirely from anyone without invoice access.
   if (access.invoices) {
     base.contractValue = row.contract_value_minor;
     base.baseAmount = row.base_amount_minor ?? undefined;
@@ -253,6 +269,9 @@ function toClient(db: Db, row: ClientRow, access: Access): Client {
     base.gstAmount = row.gst_amount_minor ?? undefined;
     base.gstMode = row.gst_mode ?? undefined;
     base.invoices = loadInvoices(db, row.id);
+  }
+  if (access.deliverables) {
+    base.deliverables = loadDeliverables(db, row.id);
   }
   if (access.documents) {
     base.documents = loadDocuments(db, row.id);
@@ -336,9 +355,12 @@ export function buildSnapshot(db: Db, actor: Actor): Snapshot {
           }
         : null,
     },
-    clients: actor.access.clients || actor.access.overview
-      ? clientRows.map((row) => toClient(db, row, actor.access))
-      : [],
+    // The roster is needed for both the dashboard and the client list; what each
+    // row *contains* is decided by toClient() above.
+    clients:
+      actor.access.clients || actor.access.overview
+        ? clientRows.map((row) => toClient(db, row, actor.access))
+        : [],
     team: actor.access.team ? loadTeam(db) : [],
     followUps: actor.access.followups ? loadFollowUps(db) : [],
   };

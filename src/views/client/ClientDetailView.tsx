@@ -31,7 +31,7 @@ const TAB_LABELS: Record<ClientTabId, string> = {
 
 export function ClientDetailView({ client }: { client: Client }) {
   const { state, actions } = useApp();
-  const { showInvoiceStats, visibleClientTabs, canWrite } = useAccess();
+  const { showInvoiceStats, visibleClientTabs, canWrite, access } = useAccess();
 
   // A restricted teammate previewing the account falls back to Overview rather
   // than seeing an empty tab.
@@ -50,7 +50,11 @@ export function ClientDetailView({ client }: { client: Client }) {
   const billingSoon = daysUntilNextBilling <= 7;
   const isOneTime = client.billingCycle === 'One-time';
 
-  const metaCols = showInvoiceStats ? 'repeat(4,1fr)' : 'repeat(2,1fr)';
+  // The strip only shows cells whose data this user receives, so the columns are
+  // counted rather than hard-coded.
+  const showDeliverableCount = !!access.deliverables;
+  const metaCellCount = 1 + (showInvoiceStats ? 2 : 0) + (showDeliverableCount ? 1 : 0);
+  const metaCols = `repeat(${metaCellCount},1fr)`;
 
   return (
     <div className="page">
@@ -178,11 +182,13 @@ export function ClientDetailView({ client }: { client: Client }) {
             </MetaCell>
           </>
         )}
-        <MetaCell label="Open deliverables" style={{ padding: '16px 20px' }}>
-          <div style={{ fontFamily: 'var(--font-ui)', fontWeight: 600, fontSize: 14, marginTop: 6 }}>
-            {openDeliverableCount}
-          </div>
-        </MetaCell>
+        {showDeliverableCount && (
+          <MetaCell label="Open deliverables" style={{ padding: '16px 20px' }}>
+            <div style={{ fontFamily: 'var(--font-ui)', fontWeight: 600, fontSize: 14, marginTop: 6 }}>
+              {openDeliverableCount}
+            </div>
+          </MetaCell>
+        )}
       </div>
 
       <div
