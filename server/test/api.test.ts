@@ -595,3 +595,88 @@ describe('changing your own password', () => {
     await call('DELETE', '/api/auth/preview', { session: owner });
   });
 });
+
+describe('Google sign-in endpoints', () => {
+  const clear = () => {
+    delete process.env.GOOGLE_CLIENT_ID;
+    delete process.env.GOOGLE_CLIENT_SECRET;
+  };
+  const configure = () => {
+    process.env.GOOGLE_CLIENT_ID = 'test-client.apps.googleusercontent.com';
+    process.env.GOOGLE_CLIENT_SECRET = 'test-secret';
+    process.env.GOOGLE_REDIRECT_URI = 'http://localhost:5173/api/auth/google/callback';
+  };
+
+  test('status reports it off, and the endpoint refuses, when unconfigured', async () => {
+    clear();
+    const status = await call('GET', '/api/auth/status');
+    assert.equal(status.body.googleEnabled, false);
+
+    const res = await fetch(`${base}/api/auth/google`, { redirect: 'manual' });
+    assert.equal(res.status, 501, 'no credentials means no Google endpoint');
+  });
+
+  test('once configured, status advertises it and the endpoint redirects to Google', async () => {
+    configure();
+    try {
+      const status = await call('GET', '/api/auth/status');
+      assert.equal(status.body.googleEnabled, true);
+
+      const res = await fetch(`${base}/api/auth/google`, { redirect: 'manual' });
+      assert.equal(res.status, 302);
+      const location = new URL(res.headers.get('location') ?? '');
+      assert.equal(location.host, 'accounts.google.com');
+      assert.equal(location.searchParams.get('client_id'), process.env.GOOGLE_CLIENT_ID);
+      assert.ok(location.searchParams.get('state'));
+      assert.equal(location.searchParams.get('code_challenge_method'), 'S256');
+
+      // The handshake values ride along in a signed, httpOnly cookie.
+      const cookie = res.headers.getSetCookie?.()[0] ?? res.headers.get('set-cookie') ?? '';
+      assert.match(cookie, /^clientops_oauth=/);
+      assert.match(cookie, /HttpOnly/i);
+    } finally {
+      clear();
+    }
+  });
+
+  test('the callback refuses a forged or expired handshake', async () => {
+    configure();
+    try {
+      // No cookie at all.
+      const noCookie = await fetch(`${freshCallback('some-code', 'some-state')}`, {
+        redirect: 'manual',
+      });
+      assert.equal(noCookie.status, 302);
+      assert.match(
+        decodeURIComponent(noCookie.headers.get('location') ?? ''),
+        /expired/,
+        'a callback with no handshake cookie is rejected',
+      );
+
+      // A real handshake cookie, but the state in the URL does not match it.
+      const started = await fetch(`${base}/api/auth/google`, { redirect: 'manual' });
+      const cookie = (started.headers.getSetCookie?.()[0] ?? '').split(';')[0];
+      const mismatched = await fetch(freshCallback('some-code', 'not-the-right-state'), {
+        redirect: 'manual',
+        headers: { cookie },
+      });
+      assert.match(
+        decodeURIComponent(mismatched.headers.get('location') ?? ''),
+        /did not match/,
+        'state mismatch is what blocks a forged callback',
+      );
+
+      // A cancelled consent screen reads as a cancellation, not an error page.
+      const denied = await fetch(`${base}/api/auth/google/callback?error=access_denied`, {
+        redirect: 'manual',
+      });
+      assert.match(decodeURIComponent(denied.headers.get('location') ?? ''), /cancelled/);
+    } finally {
+      clear();
+    }
+  });
+
+  function freshCallback(code: string, state: string): string {
+    return `${base}/api/auth/google/callback?code=${code}&state=${state}`;
+  }
+});

@@ -117,7 +117,7 @@ export function ModalHost() {
       body = modal.task ? <TaskPreview task={modal.task} client={client} /> : null;
       break;
     case 'changePassword':
-      title = 'Change your password';
+      title = state.me?.hasPassword === false ? 'Set a password' : 'Change your password';
       body = <ChangePasswordForm />;
       break;
   }

@@ -22,6 +22,8 @@ export interface Actor {
   previewAsRole: string | null;
   /** False for Viewers, and while previewing as a Viewer. */
   canWrite: boolean;
+  /** False for accounts that only sign in with Google. */
+  hasPassword: boolean;
   /** Only Owners may manage the team or start a preview. */
   canManageTeam: boolean;
 }
@@ -32,6 +34,7 @@ interface UserRow {
   email: string;
   role: string;
   permission: Permission;
+  password_hash: string;
 }
 
 export function loadAccess(db: Db, userId: string): Access {
@@ -61,7 +64,7 @@ export function writeAccess(db: Db, userId: string, access: Access): void {
 
 export function buildActor(db: Db, userId: string, previewAsId: string | null): Actor | null {
   const user = db
-    .prepare('SELECT id, name, email, role, permission FROM users WHERE id = ?')
+    .prepare('SELECT id, name, email, role, permission, password_hash FROM users WHERE id = ?')
     .get(userId) as UserRow | undefined;
   if (!user) return null;
 
@@ -70,7 +73,7 @@ export function buildActor(db: Db, userId: string, previewAsId: string | null): 
   const previewed =
     isOwner && previewAsId
       ? (db
-          .prepare('SELECT id, name, email, role, permission FROM users WHERE id = ?')
+          .prepare('SELECT id, name, email, role, permission, password_hash FROM users WHERE id = ?')
           .get(previewAsId) as UserRow | undefined)
       : undefined;
 
@@ -87,6 +90,7 @@ export function buildActor(db: Db, userId: string, previewAsId: string | null): 
     previewAsName: previewed ? previewed.name : null,
     previewAsRole: previewed ? previewed.role : null,
     canWrite: effective.permission !== 'Viewer',
+    hasPassword: user.password_hash !== '',
     canManageTeam: isOwner && !previewed,
   };
 }

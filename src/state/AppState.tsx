@@ -44,6 +44,8 @@ export interface AppStateShape {
   followUps: FollowUp[];
 
   status: LoadStatus;
+  /** Whether the server has Google sign-in configured. */
+  googleEnabled: boolean;
   /** A mutation is in flight. */
   busy: boolean;
   /** Last error, surfaced as a dismissible banner. */
@@ -77,6 +79,7 @@ const initialState = (): AppStateShape => ({
   team: [],
   followUps: [],
   status: 'loading',
+  googleEnabled: false,
   busy: false,
   error: null,
   view: 'overview',
@@ -256,13 +259,25 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
     api
       .session()
       .then((snapshot) => {
+        if (window.location.search) window.history.replaceState({}, '', window.location.pathname);
         if (!cancelled) applySnapshot(snapshot);
       })
       .catch(async (err) => {
         if (cancelled) return;
         if (err instanceof ApiError && err.isUnauthorized) {
-          const { needsSetup } = await api.status().catch(() => ({ needsSetup: false }));
-          if (!cancelled) patch({ status: needsSetup ? 'setup' : 'signed-out' });
+          const { needsSetup, googleEnabled } = await api
+            .status()
+            .catch(() => ({ needsSetup: false, googleEnabled: false }));
+          // A failed Google round trip comes back as ?authError=… on the URL.
+          const authError = new URLSearchParams(window.location.search).get('authError');
+          if (authError) window.history.replaceState({}, '', window.location.pathname);
+          if (!cancelled) {
+            patch({
+              status: needsSetup ? 'setup' : 'signed-out',
+              googleEnabled,
+              error: authError,
+            });
+          }
           return;
         }
         patch({
@@ -311,8 +326,9 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
           },
         }),
       logout: () => {
+        const { googleEnabled } = stateRef.current;
         void api.logout().finally(() => {
-          setState({ ...initialState(), status: 'signed-out' });
+          setState({ ...initialState(), status: 'signed-out', googleEnabled });
         });
       },
       reload: () => {

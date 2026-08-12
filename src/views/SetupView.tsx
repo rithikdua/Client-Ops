@@ -1,5 +1,6 @@
 import { useState, type FormEvent } from 'react';
 import { Button } from '../ds/Button';
+import { GoogleButton, OrDivider } from '../ds/GoogleButton';
 import { Mark } from '../ds/Mark';
 import { useApp } from '../state/AppState';
 
@@ -72,6 +73,16 @@ export function SetupView() {
           This workspace is empty. The first account becomes its Owner, with full access and the
           ability to invite the rest of your team.
         </div>
+
+        {state.googleEnabled && (
+          <>
+            <GoogleButton label="Continue with Google" />
+            <div className="field-hint" style={{ marginTop: 8, marginBottom: 4 }}>
+              Your Google account becomes the Owner — no password to choose.
+            </div>
+            <OrDivider label="or set a password" />
+          </>
+        )}
 
         <label className="field">
           Full name

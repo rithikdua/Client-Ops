@@ -74,6 +74,9 @@ export function createUser(db: Db, input: NewUser): string {
 /**
  * Changes a user's own password. Requires the current one, so a borrowed session
  * cannot be used to lock the real owner out of their account.
+ *
+ * An account created through Google has no password yet; that case *sets* the
+ * first one, so someone can add a password login without waiting for an Owner.
  */
 export function changePassword(
   db: Db,
@@ -86,13 +89,14 @@ export function changePassword(
     .get(userId) as { password_hash: string; password_salt: string } | undefined;
   if (!row) throw new HttpError(404, 'Account not found.');
 
-  if (!verifyPassword(currentPassword, row.password_hash, row.password_salt)) {
+  const alreadyHasPassword = row.password_hash !== '';
+  if (alreadyHasPassword && !verifyPassword(currentPassword, row.password_hash, row.password_salt)) {
     throw new HttpError(403, 'Your current password is incorrect.');
   }
   if (newPassword.length < MIN_PASSWORD_LENGTH) {
     throw new HttpError(400, `Passwords must be at least ${MIN_PASSWORD_LENGTH} characters.`);
   }
-  if (newPassword === currentPassword) {
+  if (alreadyHasPassword && newPassword === currentPassword) {
     throw new HttpError(400, 'The new password must be different.');
   }
 

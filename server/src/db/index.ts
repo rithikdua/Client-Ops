@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url';
 
 const here = dirname(fileURLToPath(import.meta.url));
 
-export const SCHEMA_VERSION = 1;
+export const SCHEMA_VERSION = 2;
 
 /** Absolute path to the SQLite file. Override with DATABASE_PATH. */
 export const DB_PATH =
@@ -34,12 +34,31 @@ export function openDb(path: string = DB_PATH): Db {
     | undefined;
   if (!row) {
     db.prepare('INSERT INTO schema_version (version) VALUES (?)').run(SCHEMA_VERSION);
-  } else if (row.version !== SCHEMA_VERSION) {
-    // Future migrations land here, keyed off row.version.
+  } else if (row.version < SCHEMA_VERSION) {
+    migrate(db, row.version);
     db.prepare('UPDATE schema_version SET version = ?').run(SCHEMA_VERSION);
   }
 
   return db;
+}
+
+/**
+ * Brings an existing database up to SCHEMA_VERSION. The CREATE TABLE statements
+ * in schema.sql only apply to fresh databases, so anything that changes an
+ * existing table has to be applied here too.
+ */
+function migrate(db: Db, from: number): void {
+  if (from < 2) {
+    // v2: Google sign-in. `google_sub` links a Google identity to an account.
+    const columns = db.prepare('PRAGMA table_info(users)').all() as { name: string }[];
+    if (!columns.some((c) => c.name === 'google_sub')) {
+      db.exec('ALTER TABLE users ADD COLUMN google_sub TEXT');
+    }
+    db.exec(
+      `CREATE UNIQUE INDEX IF NOT EXISTS idx_users_google_sub ON users(google_sub)
+         WHERE google_sub IS NOT NULL`,
+    );
+  }
 }
 
 export function newId(): string {

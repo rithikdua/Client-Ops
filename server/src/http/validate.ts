@@ -186,6 +186,8 @@ export const setupSchema = z.object({
 });
 
 export const changePasswordSchema = z.object({
-  currentPassword: z.string().min(1, 'Enter your current password.').max(200),
+  // Empty is allowed only for a Google-only account that has no password yet;
+  // the server checks which case applies.
+  currentPassword: z.string().max(200).default(''),
   newPassword: z.string().min(8, 'Use at least 8 characters.').max(200),
 });
