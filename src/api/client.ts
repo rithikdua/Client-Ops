@@ -74,8 +74,15 @@ const del = <T>(path: string) => request<T>('DELETE', path);
 
 /** Amounts sent to the API are whole currency units; responses are minor units. */
 export const api = {
+  /** Public — tells the sign-in screen whether to offer first-run setup. */
+  status: () => get<{ needsSetup: boolean }>('/auth/status'),
   session: () => get<Snapshot>('/auth/session'),
   login: (email: string, password: string) => post<Snapshot>('/auth/login', { email, password }),
+  /** Creates the workspace's first Owner. Only available while it has no users. */
+  setup: (body: { name: string; email: string; role: string; password: string }) =>
+    post<Snapshot>('/auth/setup', body),
+  changePassword: (currentPassword: string, newPassword: string) =>
+    post<Snapshot>('/auth/password', { currentPassword, newPassword }),
   logout: () => post<void>('/auth/logout'),
   startPreview: (teammateId: string) => post<Snapshot>('/auth/preview', { teammateId }),
   exitPreview: () => del<Snapshot>('/auth/preview'),

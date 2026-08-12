@@ -1,28 +1,33 @@
 import { ACCESS_SECTIONS } from '../../../src/data/options';
+import { countUsers } from '../auth/accounts';
 import { hashPassword } from '../auth/passwords';
 import { toMinor } from '../money';
 import { newId, transact, type Db } from './index';
 import { TEAM_SEED, seedClients, seedFollowUps } from './seedData';
 
 /**
- * Password given to every seeded account. Development convenience only — the
- * server refuses to seed with this in production unless SEED_PASSWORD is set.
+ * Password given to every demo account. Development convenience only — seeding
+ * refuses to run in production unless SEED_PASSWORD is set explicitly.
  */
 const DEFAULT_SEED_PASSWORD = 'demo1234';
 
 export function isSeeded(db: Db): boolean {
-  const row = db.prepare('SELECT COUNT(*) AS n FROM users').get() as { n: number };
-  return row.n > 0;
+  return countUsers(db) > 0;
 }
 
-/** Populates an empty database. No-op if any user already exists. */
-export function seedDatabase(db: Db, opts: { password?: string } = {}): void {
+/**
+ * Loads the sample workspace: four demo teammates, six client accounts and the
+ * follow-up queue. This is *opt-in* (SEED_DEMO_DATA=1 or `npm run db:demo`) — a
+ * real deployment starts empty and creates its first account through first-run
+ * setup instead. No-op if any user already exists.
+ */
+export function seedDemoWorkspace(db: Db, opts: { password?: string } = {}): void {
   if (isSeeded(db)) return;
 
   const password = opts.password ?? process.env.SEED_PASSWORD ?? DEFAULT_SEED_PASSWORD;
   if (process.env.NODE_ENV === 'production' && !process.env.SEED_PASSWORD) {
     throw new Error(
-      'Refusing to seed in production with the default demo password. Set SEED_PASSWORD.',
+      'Refusing to seed demo data in production with the default password. Set SEED_PASSWORD.',
     );
   }
 

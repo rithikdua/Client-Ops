@@ -230,6 +230,20 @@ export function TeammateForm() {
   );
 }
 
+export function ChangePasswordForm() {
+  return (
+    <>
+      <div style={{ fontSize: 13, color: 'var(--ink-3)', marginBottom: 4 }}>
+        Changing your password signs out your other sessions.
+      </div>
+      <TextField label="Current password" k="currentPassword" type="password" />
+      <TextField label="New password" k="newPassword" type="password" />
+      <TextField label="Confirm new password" k="confirmPassword" type="password" />
+      <div className="field-hint">At least 8 characters, and different from your current one.</div>
+    </>
+  );
+}
+
 export function PermissionsForm() {
   const { actions } = useApp();
   const { form } = useModalForm();

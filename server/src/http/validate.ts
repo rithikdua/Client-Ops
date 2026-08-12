@@ -176,3 +176,16 @@ export const completeFollowUpSchema = z.object({
 });
 
 export const previewSchema = z.object({ teammateId: text(60).min(1) });
+
+/** First-run setup: creates the workspace's first Owner. */
+export const setupSchema = z.object({
+  name: text(200).min(1, 'Your name is required.'),
+  email: z.string().trim().toLowerCase().email(),
+  role: text(200).default(''),
+  password: z.string().min(8, 'Use at least 8 characters.').max(200),
+});
+
+export const changePasswordSchema = z.object({
+  currentPassword: z.string().min(1, 'Enter your current password.').max(200),
+  newPassword: z.string().min(8, 'Use at least 8 characters.').max(200),
+});

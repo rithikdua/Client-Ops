@@ -15,7 +15,8 @@ export type ModalType =
   | 'followup'
   | 'completeFollowUp'
   | 'task'
-  | 'taskPreview';
+  | 'taskPreview'
+  | 'changePassword';
 
 /**
  * Every text/select/date field across every modal. Values are held as strings
@@ -67,6 +68,9 @@ export type FormKey =
   | 'gstMode'
   | 'permission'
   | 'password'
+  | 'currentPassword'
+  | 'newPassword'
+  | 'confirmPassword'
   | 'reason'
   | 'relatedClientId'
   | 'companyName'

@@ -116,18 +116,29 @@ export function Sidebar() {
             <div style={{ fontSize: 11, color: 'var(--ink-3)' }}>{state.me?.role ?? ''}</div>
           </div>
         </div>
-        <div
-          className="nav-label"
-          onClick={actions.logout}
-          style={{
-            marginTop: 10,
-            fontSize: 11.5,
-            fontWeight: 600,
-            color: 'var(--phot-purple)',
-            cursor: 'pointer',
-          }}
-        >
-          Sign out
+        <div className="nav-label" style={{ display: 'flex', gap: 12, marginTop: 10 }}>
+          <span
+            onClick={actions.openChangePassword}
+            style={{
+              fontSize: 11.5,
+              fontWeight: 600,
+              color: 'var(--phot-purple)',
+              cursor: 'pointer',
+            }}
+          >
+            Password
+          </span>
+          <span
+            onClick={actions.logout}
+            style={{
+              fontSize: 11.5,
+              fontWeight: 600,
+              color: 'var(--phot-purple)',
+              cursor: 'pointer',
+            }}
+          >
+            Sign out
+          </span>
         </div>
       </div>
     </aside>

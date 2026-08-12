@@ -93,20 +93,9 @@ export function LoginView() {
           {state.busy ? 'Signing in…' : 'Sign in'}
         </Button>
 
-        {import.meta.env.DEV && (
-          <div style={{ marginTop: 18, fontSize: 12, color: 'var(--ink-3)', lineHeight: 1.6 }}>
-            <strong style={{ color: 'var(--ink-2)' }}>Demo accounts</strong> (password{' '}
-            <code>demo1234</code>):
-            <br />
-            priya@phot.ai — Owner, full access
-            <br />
-            daniel@phot.ai — Editor, no invoice access
-            <br />
-            maya@phot.ai — Editor, no documents or follow-ups
-            <br />
-            tom@phot.ai — Viewer, read-only
-          </div>
-        )}
+        <div style={{ marginTop: 18, fontSize: 12, color: 'var(--ink-3)', lineHeight: 1.6 }}>
+          Accounts are created by a workspace Owner from the Team screen.
+        </div>
       </form>
     </div>
   );

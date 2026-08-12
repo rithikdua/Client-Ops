@@ -34,7 +34,7 @@ export type InvoiceStatusFilter = 'all' | 'Paid' | 'Partially Paid' | 'Pending' 
 export type FollowUpStatusFilter = 'pending' | 'done' | 'all';
 export type FollowUpSubTab = 'queue' | 'phonebook';
 
-export type LoadStatus = 'loading' | 'signed-out' | 'ready';
+export type LoadStatus = 'loading' | 'setup' | 'signed-out' | 'ready';
 
 export interface AppStateShape {
   /** Server-owned data. Empty until the first snapshot arrives. */
@@ -105,6 +105,9 @@ type ListName = 'contacts' | 'invoices' | 'deliverables' | 'documents';
 
 export interface AppActions {
   login: (email: string, password: string) => Promise<void>;
+  /** First-run only: creates the workspace's first Owner and signs them in. */
+  setup: (input: { name: string; email: string; role: string; password: string }) => Promise<void>;
+  openChangePassword: () => void;
   logout: () => void;
   reload: () => void;
   dismissError: () => void;
@@ -246,7 +249,8 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
     [applySnapshot, patch],
   );
 
-  // Resume an existing session on load.
+  // Resume an existing session on load. A workspace with no accounts at all
+  // lands on first-run setup rather than an unusable sign-in form.
   useEffect(() => {
     let cancelled = false;
     api
@@ -254,13 +258,17 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       .then((snapshot) => {
         if (!cancelled) applySnapshot(snapshot);
       })
-      .catch((err) => {
+      .catch(async (err) => {
         if (cancelled) return;
         if (err instanceof ApiError && err.isUnauthorized) {
-          patch({ status: 'signed-out' });
-        } else {
-          patch({ status: 'signed-out', error: err instanceof Error ? err.message : 'Cannot reach the API.' });
+          const { needsSetup } = await api.status().catch(() => ({ needsSetup: false }));
+          if (!cancelled) patch({ status: needsSetup ? 'setup' : 'signed-out' });
+          return;
         }
+        patch({
+          status: 'signed-out',
+          error: err instanceof Error ? err.message : 'Cannot reach the API.',
+        });
       });
     return () => {
       cancelled = true;
@@ -286,6 +294,22 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
           throw err;
         }
       },
+      setup: async (input) => {
+        patch({ busy: true, error: null });
+        try {
+          applySnapshot(await api.setup(input), { view: 'overview', selectedId: null });
+        } catch (err) {
+          patch({ busy: false, error: err instanceof Error ? err.message : 'Setup failed.' });
+          throw err;
+        }
+      },
+      openChangePassword: () =>
+        patch({
+          modal: {
+            type: 'changePassword',
+            form: { currentPassword: '', newPassword: '', confirmPassword: '' },
+          },
+        }),
       logout: () => {
         void api.logout().finally(() => {
           setState({ ...initialState(), status: 'signed-out' });
@@ -883,6 +907,18 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
               { onSuccess: closed },
             );
             return;
+          case 'changePassword': {
+            if ((f.newPassword ?? '') !== (f.confirmPassword ?? '')) {
+              patch({ error: 'The new passwords do not match.' });
+              return;
+            }
+            // Allowed for read-only accounts: it changes your login, not data.
+            void run(() => api.changePassword(f.currentPassword ?? '', f.newPassword ?? ''), {
+              onSuccess: closed,
+              requiresWrite: false,
+            });
+            return;
+          }
           case 'taskPreview':
             patch(closed);
             return;

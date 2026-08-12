@@ -1,6 +1,13 @@
-/** Drops every row and re-seeds. Destructive — development use only. */
+/**
+ * Empties the database. Destructive — development use only.
+ *
+ *   npm run db:reset          # wipe, leaving an empty workspace (first-run setup)
+ *   npm run db:demo           # wipe and load the sample workspace
+ */
 import { DB_PATH, openDb } from '../src/db/index';
-import { resetDatabase, seedDatabase } from '../src/db/seed';
+import { resetDatabase, seedDemoWorkspace } from '../src/db/seed';
+
+const withDemo = process.argv.includes('--demo');
 
 if (process.env.NODE_ENV === 'production' && !process.env.ALLOW_DB_RESET) {
   console.error('Refusing to reset a production database. Set ALLOW_DB_RESET=1 to override.');
@@ -9,6 +16,12 @@ if (process.env.NODE_ENV === 'production' && !process.env.ALLOW_DB_RESET) {
 
 const db = openDb();
 resetDatabase(db);
-seedDatabase(db);
+if (withDemo) seedDemoWorkspace(db);
 db.close();
-console.log(`[client-ops] database reset and re-seeded: ${DB_PATH}`);
+
+console.log(`[client-ops] database emptied: ${DB_PATH}`);
+console.log(
+  withDemo
+    ? '[client-ops] sample workspace loaded — sign in as priya@phot.ai / demo1234'
+    : '[client-ops] open the app to create your account, or run: npm run create-user',
+);

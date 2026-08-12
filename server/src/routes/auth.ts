@@ -1,4 +1,5 @@
 import { Router } from 'express';
+import { changePassword, createUser, needsSetup } from '../auth/accounts';
 import { buildActor, requireAuth, requireTeamAdmin } from '../auth/permissions';
 import {
   cookieOptions,
@@ -12,10 +13,40 @@ import { verifyPassword } from '../auth/passwords';
 import type { Db } from '../db/index';
 import { buildSnapshot } from '../domain/snapshot';
 import { HttpError } from '../http/errors';
-import { loginSchema, previewSchema } from '../http/validate';
+import { changePasswordSchema, loginSchema, previewSchema, setupSchema } from '../http/validate';
 
 export function authRoutes(db: Db): Router {
   const router = Router();
+
+  /** Public: lets the sign-in screen offer first-run setup instead. */
+  router.get('/status', (_req, res) => {
+    res.json({ needsSetup: needsSetup(db) });
+  });
+
+  /**
+   * Creates the workspace's first account, as an Owner. Open only while there
+   * are no users at all — once one exists this closes permanently and further
+   * accounts are created by an Owner from the Team screen. That is deliberate:
+   * an internal tool should not accept open self-registration.
+   */
+  router.post('/setup', (req, res) => {
+    if (!needsSetup(db)) {
+      throw new HttpError(409, 'This workspace already has an account. Ask an Owner to invite you.');
+    }
+    const input = setupSchema.parse(req.body);
+    const id = createUser(db, {
+      name: input.name,
+      email: input.email,
+      role: input.role || 'Owner',
+      permission: 'Owner',
+      password: input.password,
+    });
+
+    const sessionId = createSession(db, id);
+    res.cookie(SESSION_COOKIE, serializeCookie(sessionId), cookieOptions());
+    const actor = buildActor(db, id, null);
+    res.status(201).json(buildSnapshot(db, actor!));
+  });
 
   router.post('/login', (req, res) => {
     const { email, password } = loginSchema.parse(req.body);
@@ -44,6 +75,25 @@ export function authRoutes(db: Db): Router {
 
   router.get('/session', requireAuth, (req, res) => {
     res.json(buildSnapshot(db, req.actor!));
+  });
+
+  /**
+   * Changes your own password. Not available while previewing as someone else —
+   * the preview would otherwise decide whose password is being changed.
+   */
+  router.post('/password', requireAuth, (req, res) => {
+    if (req.actor!.previewAsId) {
+      throw new HttpError(400, 'Exit the preview before changing your password.');
+    }
+    const input = changePasswordSchema.parse(req.body);
+    changePassword(db, req.actor!.userId, input.currentPassword, input.newPassword);
+
+    // Every session was just invalidated, including this one — issue a new one
+    // so the person who made the change stays signed in.
+    const sessionId = createSession(db, req.actor!.userId);
+    res.cookie(SESSION_COOKIE, serializeCookie(sessionId), cookieOptions());
+    const actor = buildActor(db, req.actor!.userId, null);
+    res.json(buildSnapshot(db, actor!));
   });
 
   // Previewing another teammate's access is Owner-only and recorded on the
