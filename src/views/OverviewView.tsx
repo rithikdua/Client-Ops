@@ -29,7 +29,8 @@ export function OverviewView() {
   const overdueDelCount = withOutstanding.reduce((a, x) => a + x.overdueDel, 0);
   const in14 = addDays(TODAY, 14);
   const dueSoonCount = clients.reduce(
-    (a, c) => a + c.deliverables.filter((d) => d.status !== 'Done' && parseISO(d.dueDate) <= in14).length,
+    (a, c) =>
+      a + c.deliverables.filter((d) => d.status !== 'Done' && parseISO(d.dueDate) <= in14).length,
     0,
   );
 
@@ -39,7 +40,10 @@ export function OverviewView() {
   const newThisWeek = clients.filter((c) => parseISO(c.startDate) >= weekAgo).length;
   const newThisMonth = clients.filter((c) => parseISO(c.startDate) >= monthAgo).length;
   const upcomingRenewals = clients.filter(
-    (c) => c.contractEndDate && parseISO(c.contractEndDate) >= TODAY && parseISO(c.contractEndDate) <= in30,
+    (c) =>
+      c.contractEndDate &&
+      parseISO(c.contractEndDate) >= TODAY &&
+      parseISO(c.contractEndDate) <= in30,
   ).length;
   const portfolioValue = clients.reduce((a, c) => a + (c.contractValue || 0), 0);
   const onboardingCount = clients.filter((c) => c.stage === 'Onboarding').length;
@@ -76,7 +80,13 @@ export function OverviewView() {
         action={
           canWrite && (
             <button type="button" className="btn btn--primary" onClick={actions.openAddClient}>
-              <img src="/assets/icons/add-square.svg" width={16} height={16} className="icon-invert" alt="" />
+              <img
+                src="/assets/icons/add-square.svg"
+                width={16}
+                height={16}
+                className="icon-invert"
+                alt=""
+              />
               Add client
             </button>
           )
@@ -109,7 +119,9 @@ export function OverviewView() {
           <StatCard
             label="Deliverables due (14d)"
             value={dueSoonCount}
-            chip={<Chip color={overdueDelCount > 0 ? 'red' : 'green'}>{overdueDelCount} overdue</Chip>}
+            chip={
+              <Chip color={overdueDelCount > 0 ? 'red' : 'green'}>{overdueDelCount} overdue</Chip>
+            }
           />
         )}
       </div>
@@ -150,11 +162,19 @@ export function OverviewView() {
                     <div style={{ fontFamily: 'var(--font-ui)', fontWeight: 600, fontSize: 13.5 }}>
                       {x.c.name}
                     </div>
-                    <div style={{ fontSize: 12, color: 'var(--ink-3)', marginTop: 2 }}>{x.c.industry}</div>
+                    <div style={{ fontSize: 12, color: 'var(--ink-3)', marginTop: 2 }}>
+                      {x.c.industry}
+                    </div>
                   </div>
                 </div>
                 <div
-                  style={{ display: 'flex', gap: 6, flexWrap: 'wrap', paddingLeft: 44, marginTop: 8 }}
+                  style={{
+                    display: 'flex',
+                    gap: 6,
+                    flexWrap: 'wrap',
+                    paddingLeft: 44,
+                    marginTop: 8,
+                  }}
                 >
                   {reasons.map((r) => (
                     <Chip key={r.label} color={r.color}>
@@ -166,7 +186,14 @@ export function OverviewView() {
             );
           })}
           {needsAttention.length === 0 && (
-            <div style={{ padding: '32px 20px', textAlign: 'center', color: 'var(--ink-3)', fontSize: 13.5 }}>
+            <div
+              style={{
+                padding: '32px 20px',
+                textAlign: 'center',
+                color: 'var(--ink-3)',
+                fontSize: 13.5,
+              }}
+            >
               Every account is on track.
             </div>
           )}
@@ -202,47 +229,55 @@ export function OverviewView() {
         </div>
       </div>
 
-      <div className="card card--clip" style={{ marginTop: 20 }}>
-        <div
-          className="card-head"
-          style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}
-        >
-          <div className="card-title">Upcoming follow-ups</div>
-          <span
-            onClick={() => actions.goTo('followups')}
-            style={{ fontSize: 12.5, color: 'var(--phot-purple)', cursor: 'pointer' }}
-          >
-            View all {pendingFollowUps.length}
-          </span>
-        </div>
-        {pendingFollowUps.slice(0, 5).map((row) => (
+      {/* Hidden outright without follow-up access: an empty card would read as
+          "there are none" when the truth is "you cannot see them". */}
+      {access.followups && (
+        <div className="card card--clip" style={{ marginTop: 20 }}>
           <div
-            key={row.id}
-            style={{
-              display: 'flex',
-              justifyContent: 'space-between',
-              alignItems: 'center',
-              padding: 'var(--row-pad)',
-              borderBottom: '1px solid var(--border-2)',
-            }}
+            className="card-head"
+            style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}
           >
-            <div style={{ minWidth: 0 }}>
-              <span style={{ fontWeight: 600, fontSize: 13.5 }}>{row.name}</span>
-              <span style={{ color: 'var(--ink-3)', fontSize: 12.5 }}> · {row.clientName}</span>
-              <div style={{ fontSize: 12.5, color: 'var(--ink-2)', marginTop: 2 }}>{row.reason}</div>
-            </div>
-            <div style={{ textAlign: 'right', flexShrink: 0, paddingLeft: 12 }}>
-              <div style={{ fontSize: 12, color: row.dueColor }}>{row.dueDateFormatted}</div>
-              <div style={{ fontSize: 11.5, color: 'var(--ink-3)', marginTop: 2 }}>{row.owner}</div>
-            </div>
+            <div className="card-title">Upcoming follow-ups</div>
+            <span
+              onClick={() => actions.goTo('followups')}
+              style={{ fontSize: 12.5, color: 'var(--phot-purple)', cursor: 'pointer' }}
+            >
+              View all {pendingFollowUps.length}
+            </span>
           </div>
-        ))}
-        {pendingFollowUps.length === 0 && (
-          <div style={{ padding: '24px 20px', color: 'var(--ink-3)', fontSize: 13.5 }}>
-            No pending follow-ups.
-          </div>
-        )}
-      </div>
+          {pendingFollowUps.slice(0, 5).map((row) => (
+            <div
+              key={row.id}
+              style={{
+                display: 'flex',
+                justifyContent: 'space-between',
+                alignItems: 'center',
+                padding: 'var(--row-pad)',
+                borderBottom: '1px solid var(--border-2)',
+              }}
+            >
+              <div style={{ minWidth: 0 }}>
+                <span style={{ fontWeight: 600, fontSize: 13.5 }}>{row.name}</span>
+                <span style={{ color: 'var(--ink-3)', fontSize: 12.5 }}> · {row.clientName}</span>
+                <div style={{ fontSize: 12.5, color: 'var(--ink-2)', marginTop: 2 }}>
+                  {row.reason}
+                </div>
+              </div>
+              <div style={{ textAlign: 'right', flexShrink: 0, paddingLeft: 12 }}>
+                <div style={{ fontSize: 12, color: row.dueColor }}>{row.dueDateFormatted}</div>
+                <div style={{ fontSize: 11.5, color: 'var(--ink-3)', marginTop: 2 }}>
+                  {row.owner}
+                </div>
+              </div>
+            </div>
+          ))}
+          {pendingFollowUps.length === 0 && (
+            <div style={{ padding: '24px 20px', color: 'var(--ink-3)', fontSize: 13.5 }}>
+              No pending follow-ups.
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }
