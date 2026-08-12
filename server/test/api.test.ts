@@ -680,3 +680,89 @@ describe('Google sign-in endpoints', () => {
     return `${base}/api/auth/google/callback?code=${code}&state=${state}`;
   }
 });
+
+describe('the API refuses to store a dangerous URL (C-01)', () => {
+  const XSS = 'javascript:alert(document.domain)';
+
+  test('rejects it on every field that accepts a link', async () => {
+    const cases: [string, string, unknown][] = [
+      [
+        'client website',
+        '/api/clients',
+        {
+          name: 'XSS Co',
+          health: 'Active',
+          stage: 'Onboarding',
+          billingCycle: 'Monthly',
+          startDate: '2026-08-01',
+          website: XSS,
+        },
+      ],
+      [
+        'invoice file',
+        '/api/clients/c1/invoices',
+        {
+          number: 'INV-XSS',
+          baseAmount: 100,
+          gstPercent: 18,
+          gstMode: 'excluded',
+          issueDate: '2026-08-01',
+          dueDate: '2026-08-15',
+          fileUrl: XSS,
+        },
+      ],
+      [
+        'deliverable file',
+        '/api/clients/c1/deliverables',
+        { title: 'XSS', dueDate: '2026-09-01', fileUrl: XSS },
+      ],
+      ['document link', '/api/clients/c1/documents', { name: 'XSS.pdf', type: 'Contract', url: XSS }],
+      ['task attachment', '/api/clients/c1/tasks', { title: 'XSS', attachments: [XSS] }],
+    ];
+
+    for (const [label, path, body] of cases) {
+      const res = await call('POST', path, { session: owner, body });
+      assert.equal(res.status, 400, `${label} must be rejected`);
+      assert.match(JSON.stringify(res.body), /http/, `${label} error should explain the rule`);
+    }
+  });
+
+  test('rejects it when attaching a file to an existing invoice or deliverable', async () => {
+    const snapshot = await call('GET', '/api/auth/session', { session: owner });
+    const client = snapshot.body.clients.find((c: any) => c.id === 'c1');
+    const invoiceId = client.invoices[0].id;
+    const deliverableId = client.deliverables[0].id;
+
+    assert.equal(
+      (
+        await call('PUT', `/api/clients/c1/invoices/${invoiceId}/file`, {
+          session: owner,
+          body: { fileName: 'x', fileUrl: XSS },
+        })
+      ).status,
+      400,
+    );
+    assert.equal(
+      (
+        await call('PATCH', `/api/clients/c1/deliverables/${deliverableId}`, {
+          session: owner,
+          body: { fileUrl: XSS },
+        })
+      ).status,
+      400,
+    );
+  });
+
+  test('still accepts the links people actually use', async () => {
+    const res = await call('POST', '/api/clients/c1/documents', {
+      session: owner,
+      body: { name: 'MSA.pdf', type: 'Contract', url: 'https://drive.google.com/file/d/abc/view' },
+    });
+    assert.equal(res.status, 201);
+    const uploaded = await call('POST', '/api/clients/c1/tasks', {
+      session: owner,
+      body: { title: 'With an upload', attachments: ['/api/uploads/abc.png'] },
+    });
+    assert.equal(uploaded.status, 201, 'our own upload paths are allowed');
+  });
+});

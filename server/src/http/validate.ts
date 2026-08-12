@@ -11,6 +11,7 @@ import {
   STAGE_OPTIONS,
   TASK_STATUS_OPTIONS,
 } from '../../../src/data/options';
+import { isSafeUrl, UNSAFE_URL_MESSAGE } from '../../../src/lib/urls';
 
 const enumOf = <T extends string>(values: readonly T[]) => z.enum(values as unknown as [T, ...T[]]);
 
@@ -21,6 +22,14 @@ const optionalDate = z.union([isoDate, z.literal('')]).optional();
 /** Money arrives as whole currency units and is converted to minor units. */
 const majorAmount = z.number().finite().min(0).max(1_000_000_000);
 const text = (max = 500) => z.string().trim().max(max);
+
+/**
+ * A link we are willing to store. Refusing `javascript:` and friends here keeps
+ * the database clean; the UI refuses to render them too, so an older row cannot
+ * become a stored-XSS payload either.
+ */
+const linkUrl = (max = 2000) =>
+  text(max).refine((v) => v === '' || isSafeUrl(v), { message: UNSAFE_URL_MESSAGE });
 
 export const gstMode = z.enum(['excluded', 'included']);
 export const currency = z.enum(['USD', 'INR', 'EUR', 'GBP', 'AED']);
@@ -45,7 +54,7 @@ export const clientSchema = z.object({
   onboardingDate: optionalDate,
   contractEndDate: optionalDate,
   paymentTerms: enumOf(PAYMENT_TERMS_OPTIONS).default('Net 30'),
-  website: text(300).default(''),
+  website: linkUrl(300).default(''),
   notes: text(4000).default(''),
   legalName: text(300).default(''),
   gstin: text(30).default(''),
@@ -89,7 +98,7 @@ export const invoiceSchema = z.object({
   issueDate: isoDate,
   dueDate: isoDate,
   fileName: text(300).default(''),
-  fileUrl: text(2000).default(''),
+  fileUrl: linkUrl().default(''),
 });
 
 export const paymentSchema = z
@@ -104,7 +113,7 @@ export const paymentSchema = z
 
 export const fileSchema = z.object({
   fileName: text(300).default(''),
-  fileUrl: text(2000).default(''),
+  fileUrl: linkUrl().default(''),
 });
 
 export const deliverableSchema = z.object({
@@ -114,19 +123,19 @@ export const deliverableSchema = z.object({
   dueDate: isoDate,
   status: enumOf(DELIVERABLE_STATUS_OPTIONS).default('Not started'),
   fileName: text(300).default(''),
-  fileUrl: text(2000).default(''),
+  fileUrl: linkUrl().default(''),
 });
 
 export const deliverablePatchSchema = z.object({
   status: enumOf(DELIVERABLE_STATUS_OPTIONS).optional(),
   fileName: text(300).optional(),
-  fileUrl: text(2000).optional(),
+  fileUrl: linkUrl().optional(),
 });
 
 export const documentSchema = z.object({
   name: text(300).min(1, 'A document name is required.'),
   type: enumOf(DOCUMENT_TYPE_OPTIONS),
-  url: text(2000).default(''),
+  url: linkUrl().default(''),
   source: z.enum(['us', 'client']).default('us'),
 });
 
@@ -142,7 +151,7 @@ export const taskSchema = z.object({
   status: enumOf(TASK_STATUS_OPTIONS).default('New'),
   priority: enumOf(PRIORITY_OPTIONS).default('Medium'),
   dueDate: optionalDate,
-  attachments: z.array(text(2000)).max(20).default([]),
+  attachments: z.array(linkUrl()).max(20).default([]),
 });
 
 export const taskPatchSchema = taskSchema.partial();

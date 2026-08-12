@@ -8,6 +8,7 @@ import { currentBillingPeriod, cyclePeriodLabel, fmtDate, fmtDateObj, parseISO, 
 import { invoiceBalance, invoicePaidAmount } from '../../lib/invoices';
 import { fmtMoney } from '../../lib/money';
 import { healthColor, stageColor } from '../../lib/statusColors';
+import { safeHref } from '../../lib/urls';
 import { useAccess } from '../../state/access';
 import { useApp } from '../../state/AppState';
 import { ActivityTab } from './ActivityTab';
@@ -95,9 +96,14 @@ export function ClientDetailView({ client }: { client: Client }) {
                 <>
                   {' '}
                   ·{' '}
-                  <a href={client.website} target="_blank" rel="noreferrer">
-                    {client.website}
-                  </a>
+                  {/* An unsafe link renders as plain text rather than a trap. */}
+                  {safeHref(client.website) ? (
+                    <a href={safeHref(client.website)} target="_blank" rel="noreferrer noopener">
+                      {client.website}
+                    </a>
+                  ) : (
+                    <span>{client.website}</span>
+                  )}
                 </>
               )}
             </div>

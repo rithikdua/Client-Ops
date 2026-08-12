@@ -15,6 +15,7 @@ import {
 } from '../../lib/invoices';
 import { fmtMoney } from '../../lib/money';
 import { chipDotColor, invoiceStatusColor } from '../../lib/statusColors';
+import { safeHref } from '../../lib/urls';
 import { useAccess } from '../../state/access';
 import { useApp } from '../../state/AppState';
 
@@ -114,7 +115,12 @@ export function InvoicesTab({ client }: { client: Client }) {
                   {inv.file && (
                     <div style={{ display: 'flex', alignItems: 'center', gap: 5, marginTop: 4 }}>
                       <Icon name="document" size={12} />
-                      <a href={inv.file.url || '#'} target="_blank" rel="noreferrer" style={{ fontSize: 11.5 }}>
+                      <a
+                        href={safeHref(inv.file.url)}
+                        target="_blank"
+                        rel="noreferrer noopener"
+                        style={{ fontSize: 11.5 }}
+                      >
                         {inv.file.name}
                       </a>
                     </div>

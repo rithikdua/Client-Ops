@@ -3,6 +3,7 @@ import type { TaskStatus } from '../data/types';
 import { CHIP_PALETTES } from '../ds/Chip';
 import { attachmentLabel, isImageAttachment, thumbnailStyle } from '../lib/attachments';
 import { taskStatusColor } from '../lib/statusColors';
+import { safeHref } from '../lib/urls';
 
 /** Ticket key, e.g. "COB-3" — first three letters of the client + row number. */
 export function taskProjectKey(clientName: string): string {
@@ -58,23 +59,25 @@ export function TaskStatusSelect({
 export function AttachmentList({ attachments }: { attachments: string[] }) {
   return (
     <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
-      {attachments.map((url, i) =>
-        isImageAttachment(url) ? (
-          <a key={i} href={url} target="_blank" rel="noreferrer" style={{ display: 'inline-block' }}>
+      {attachments.map((url, i) => {
+        // A thumbnail of an unsafe URL is still shown, just not clickable.
+        const href = safeHref(url);
+        return isImageAttachment(url) ? (
+          <a key={i} href={href} target="_blank" rel="noreferrer noopener" style={{ display: 'inline-block' }}>
             <div style={thumbnailStyle(url, 56, 8)} />
           </a>
         ) : (
           <a
             key={i}
-            href={url}
+            href={href}
             target="_blank"
-            rel="noreferrer"
+            rel="noreferrer noopener"
             style={{
               display: 'inline-flex',
               alignItems: 'center',
               gap: 5,
               fontSize: 12,
-              color: 'var(--phot-purple)',
+              color: href ? 'var(--phot-purple)' : 'var(--ink-3)',
               textDecoration: 'none',
               height: 56,
             }}
@@ -88,8 +91,8 @@ export function AttachmentList({ attachments }: { attachments: string[] }) {
             />
             {attachmentLabel(url)}
           </a>
-        ),
-      )}
+        );
+      })}
     </div>
   );
 }
