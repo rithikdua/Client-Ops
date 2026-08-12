@@ -192,6 +192,8 @@ export const setupSchema = z.object({
   email: z.string().trim().toLowerCase().email(),
   role: text(200).default(''),
   password: z.string().min(8, 'Use at least 8 characters.').max(200),
+  /** Required when the server sets SETUP_TOKEN. */
+  setupToken: z.string().max(200).default(''),
 });
 
 export const changePasswordSchema = z.object({

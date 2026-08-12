@@ -18,6 +18,7 @@ export function SetupView() {
   const [role, setRole] = useState('');
   const [password, setPassword] = useState('');
   const [confirm, setConfirm] = useState('');
+  const [setupCode, setSetupCode] = useState('');
   const [localError, setLocalError] = useState<string | null>(null);
 
   const submit = (e?: FormEvent) => {
@@ -35,9 +36,15 @@ export function SetupView() {
       setLocalError('The passwords do not match.');
       return;
     }
-    void actions.setup({ name: name.trim(), email: email.trim(), role: role.trim(), password }).catch(
-      () => {},
-    );
+    void actions
+      .setup({
+        name: name.trim(),
+        email: email.trim(),
+        role: role.trim(),
+        password,
+        setupToken: setupCode.trim(),
+      })
+      .catch(() => {});
   };
 
   const message = localError ?? state.error;
@@ -73,6 +80,22 @@ export function SetupView() {
           This workspace is empty. The first account becomes its Owner, with full access and the
           ability to invite the rest of your team.
         </div>
+
+        {state.setupTokenRequired && (
+          <label className="field" style={{ marginBottom: 16 }}>
+            Setup code
+            <input
+              className="field-input"
+              value={setupCode}
+              onChange={(e) => setSetupCode(e.target.value)}
+              placeholder="From whoever deployed this"
+              autoComplete="off"
+            />
+            <div className="field-hint">
+              This deployment requires the one-time code set as SETUP_TOKEN.
+            </div>
+          </label>
+        )}
 
         {state.googleEnabled && (
           <>

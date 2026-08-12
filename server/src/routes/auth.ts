@@ -1,5 +1,6 @@
+import { timingSafeEqual } from 'node:crypto';
 import { Router } from 'express';
-import { changePassword, createUser, needsSetup } from '../auth/accounts';
+import { changePassword, claimFirstOwner, needsSetup, setupToken } from '../auth/accounts';
 import {
   exchangeCode,
   googleConfig,
@@ -23,18 +24,32 @@ import {
   SESSION_COOKIE,
   signPayload,
 } from '../auth/sessions';
-import { verifyPassword } from '../auth/passwords';
+import { hashPassword, verifyPassword } from '../auth/passwords';
 import type { Db } from '../db/index';
 import { buildSnapshot } from '../domain/snapshot';
 import { asyncRoute, HttpError } from '../http/errors';
 import { changePasswordSchema, loginSchema, previewSchema, setupSchema } from '../http/validate';
+
+/**
+ * A real hash to compare against when the account does not exist, so login costs
+ * the same either way. Generated once per process; the value is never a valid
+ * password for anyone.
+ */
+const { hash: DUMMY_HASH, salt: DUMMY_SALT } = hashPassword(
+  'no-such-account-' + Math.random().toString(36).slice(2),
+);
 
 export function authRoutes(db: Db): Router {
   const router = Router();
 
   /** Public: lets the sign-in screen offer first-run setup and Google. */
   router.get('/status', (_req, res) => {
-    res.json({ needsSetup: needsSetup(db), googleEnabled: isGoogleEnabled() });
+    res.json({
+      needsSetup: needsSetup(db),
+      googleEnabled: isGoogleEnabled(),
+      // The client only learns *whether* a token is needed, never its value.
+      setupTokenRequired: !!setupToken(),
+    });
   });
 
   /**
@@ -92,21 +107,39 @@ export function authRoutes(db: Db): Router {
   );
 
   /**
-   * Creates the workspace's first account, as an Owner. Open only while there
-   * are no users at all — once one exists this closes permanently and further
-   * accounts are created by an Owner from the Team screen. That is deliberate:
-   * an internal tool should not accept open self-registration.
+   * Creates the workspace's first account, as an Owner. Open only while there are
+   * no users at all — once one exists this closes permanently and further accounts
+   * are created by an Owner from the Team screen. An internal tool should not
+   * accept open self-registration.
+   *
+   * Two protections beyond that:
+   *  - SETUP_TOKEN, when set, must be presented. Required in production, because
+   *    an unguarded bootstrap endpoint on a public URL is a land-grab: whoever
+   *    reaches it first becomes the administrator.
+   *  - the emptiness check and the insert are one transaction, so two
+   *    simultaneous requests cannot both win the race and create two Owners.
    */
   router.post('/setup', (req, res) => {
-    if (!needsSetup(db)) {
-      throw new HttpError(409, 'This workspace already has an account. Ask an Owner to invite you.');
-    }
     const input = setupSchema.parse(req.body);
-    const id = createUser(db, {
+    const required = setupToken();
+
+    if (!required && process.env.NODE_ENV === 'production') {
+      throw new HttpError(
+        403,
+        'Set SETUP_TOKEN before creating the first account on a production deployment.',
+      );
+    }
+    if (required) {
+      const provided = Buffer.from(input.setupToken);
+      const expected = Buffer.from(required);
+      const ok = provided.length === expected.length && timingSafeEqual(provided, expected);
+      if (!ok) throw new HttpError(403, 'That setup code is not correct.');
+    }
+
+    const id = claimFirstOwner(db, {
       name: input.name,
       email: input.email,
       role: input.role || 'Owner',
-      permission: 'Owner',
       password: input.password,
     });
 
@@ -122,10 +155,18 @@ export function authRoutes(db: Db): Router {
       .prepare('SELECT id, password_hash, password_salt FROM users WHERE email = ?')
       .get(email) as { id: string; password_hash: string; password_salt: string } | undefined;
 
-    // Same message and roughly the same work either way, so the response can't
-    // be used to enumerate which addresses have accounts.
-    const ok = user && verifyPassword(password, user.password_hash, user.password_salt);
-    if (!user || !ok) throw new HttpError(401, 'Email or password is incorrect.');
+    // Hash even when the address is unknown, and even for a Google-only account
+    // that has no password. Skipping the work would make an unknown address
+    // answer measurably faster than a real one — a timing oracle for enumerating
+    // who has an account. The message is identical either way.
+    const ok = verifyPassword(
+      password,
+      user && user.password_hash ? user.password_hash : DUMMY_HASH,
+      user && user.password_hash ? user.password_salt : DUMMY_SALT,
+    );
+    if (!user || !user.password_hash || !ok) {
+      throw new HttpError(401, 'Email or password is incorrect.');
+    }
 
     const sessionId = createSession(db, user.id);
     res.cookie(SESSION_COOKIE, serializeCookie(sessionId), cookieOptions());

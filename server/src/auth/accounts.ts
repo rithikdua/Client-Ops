@@ -7,6 +7,15 @@ import { writeAccess } from './permissions';
 
 export const MIN_PASSWORD_LENGTH = 8;
 
+/**
+ * Optional one-time secret that first-run setup must present. Set SETUP_TOKEN on
+ * any deployment reachable from the internet: without it, whoever loads the page
+ * first becomes the Owner.
+ */
+export function setupToken(): string | null {
+  return process.env.SETUP_TOKEN?.trim() || null;
+}
+
 export function countUsers(db: Db): number {
   return (db.prepare('SELECT COUNT(*) AS n FROM users').get() as { n: number }).n;
 }
@@ -109,5 +118,23 @@ export function changePassword(
     );
     // Signing out other sessions is the point of a password change.
     db.prepare('DELETE FROM sessions WHERE user_id = ?').run(userId);
+  });
+}
+
+/**
+ * Creates the very first account, as an Owner, or fails if the workspace already
+ * has one.
+ *
+ * The emptiness check and the insert happen in a single transaction. Checking
+ * first and inserting afterwards is a race: two simultaneous requests can both
+ * see zero users and both create an Owner, which on a public deployment means a
+ * stranger ends up with an administrator account alongside the real one.
+ */
+export function claimFirstOwner(db: Db, input: Omit<NewUser, 'permission'>): string {
+  return transact(db, () => {
+    if (countUsers(db) !== 0) {
+      throw new HttpError(409, 'This workspace already has an account. Ask an Owner to invite you.');
+    }
+    return createUser(db, { ...input, permission: 'Owner' });
   });
 }

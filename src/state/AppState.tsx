@@ -46,6 +46,8 @@ export interface AppStateShape {
   status: LoadStatus;
   /** Whether the server has Google sign-in configured. */
   googleEnabled: boolean;
+  /** Whether first-run setup requires the deployment's SETUP_TOKEN. */
+  setupTokenRequired: boolean;
   /** A mutation is in flight. */
   busy: boolean;
   /** Last error, surfaced as a dismissible banner. */
@@ -80,6 +82,7 @@ const initialState = (): AppStateShape => ({
   followUps: [],
   status: 'loading',
   googleEnabled: false,
+  setupTokenRequired: false,
   busy: false,
   error: null,
   view: 'overview',
@@ -109,7 +112,13 @@ type ListName = 'contacts' | 'invoices' | 'deliverables' | 'documents';
 export interface AppActions {
   login: (email: string, password: string) => Promise<void>;
   /** First-run only: creates the workspace's first Owner and signs them in. */
-  setup: (input: { name: string; email: string; role: string; password: string }) => Promise<void>;
+  setup: (input: {
+    name: string;
+    email: string;
+    role: string;
+    password: string;
+    setupToken: string;
+  }) => Promise<void>;
   openChangePassword: () => void;
   logout: () => void;
   reload: () => void;
@@ -265,9 +274,9 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       .catch(async (err) => {
         if (cancelled) return;
         if (err instanceof ApiError && err.isUnauthorized) {
-          const { needsSetup, googleEnabled } = await api
+          const { needsSetup, googleEnabled, setupTokenRequired } = await api
             .status()
-            .catch(() => ({ needsSetup: false, googleEnabled: false }));
+            .catch(() => ({ needsSetup: false, googleEnabled: false, setupTokenRequired: false }));
           // A failed Google round trip comes back as ?authError=… on the URL.
           const authError = new URLSearchParams(window.location.search).get('authError');
           if (authError) window.history.replaceState({}, '', window.location.pathname);
@@ -275,6 +284,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
             patch({
               status: needsSetup ? 'setup' : 'signed-out',
               googleEnabled,
+              setupTokenRequired,
               error: authError,
             });
           }
@@ -326,9 +336,9 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
           },
         }),
       logout: () => {
-        const { googleEnabled } = stateRef.current;
+        const { googleEnabled, setupTokenRequired } = stateRef.current;
         void api.logout().finally(() => {
-          setState({ ...initialState(), status: 'signed-out', googleEnabled });
+          setState({ ...initialState(), status: 'signed-out', googleEnabled, setupTokenRequired });
         });
       },
       reload: () => {

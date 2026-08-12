@@ -12,6 +12,7 @@ process.env.SESSION_SECRET = 'test-secret';
 const { createApp } = await import('../src/app');
 const { openDb } = await import('../src/db/index');
 const { seedDemoWorkspace } = await import('../src/db/seed');
+const { HttpError: HttpErrorClass } = await import('../src/http/errors');
 
 const db = openDb(':memory:');
 seedDemoWorkspace(db, { password: 'demo1234' });
@@ -764,5 +765,127 @@ describe('the API refuses to store a dangerous URL (C-01)', () => {
       body: { title: 'With an upload', attachments: ['/api/uploads/abc.png'] },
     });
     assert.equal(uploaded.status, 201, 'our own upload paths are allowed');
+  });
+});
+
+describe('first-run setup is not a land-grab (C-02)', () => {
+  const freshApp = () => {
+    const fresh = openDb(':memory:');
+    const srv = createApp(fresh).listen(0);
+    const url = `http://127.0.0.1:${(srv.address() as AddressInfo).port}`;
+    return { fresh, srv, url };
+  };
+  const setup = (url: string, body: unknown) =>
+    fetch(`${url}/api/auth/setup`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+  const OWNER = { name: 'First', email: 'first@example.com', password: 'a-real-password' };
+
+  test('the emptiness check and the insert are atomic', async () => {
+    const { fresh, srv } = freshApp();
+    try {
+      const { claimFirstOwner } = await import('../src/auth/accounts');
+      claimFirstOwner(fresh, { name: 'A', email: 'a@example.com', password: 'password-123' });
+
+      // A second claim must lose, whatever the timing. (better-sqlite3 is
+      // synchronous, so two HTTP requests cannot genuinely interleave here; this
+      // asserts the contract the transaction provides.)
+      assert.throws(
+        () => claimFirstOwner(fresh, { name: 'B', email: 'b@example.com', password: 'password-123' }),
+        (err: unknown) => err instanceof HttpErrorClass && err.status === 409,
+      );
+      assert.equal((fresh.prepare('SELECT COUNT(*) AS n FROM users').get() as any).n, 1);
+      const owners = fresh
+        .prepare("SELECT COUNT(*) AS n FROM users WHERE permission = 'Owner'")
+        .get() as any;
+      assert.equal(owners.n, 1, 'exactly one Owner');
+    } finally {
+      srv.close();
+      fresh.close();
+    }
+  });
+
+  test('only the first of many concurrent attempts succeeds', async () => {
+    const { fresh, srv, url } = freshApp();
+    try {
+      const results = await Promise.all(
+        Array.from({ length: 5 }, (_, i) =>
+          setup(url, { ...OWNER, email: `race-${i}@example.com` }).then((r) => r.status),
+        ),
+      );
+      assert.equal(results.filter((s) => s === 201).length, 1, 'one winner');
+      assert.equal(results.filter((s) => s === 409).length, 4, 'everyone else is refused');
+    } finally {
+      srv.close();
+      fresh.close();
+    }
+  });
+
+  test('with SETUP_TOKEN set, the right code is required', async () => {
+    process.env.SETUP_TOKEN = 'the-one-time-code';
+    const { fresh, srv, url } = freshApp();
+    try {
+      const status = await (await fetch(`${url}/api/auth/status`)).json() as any;
+      assert.equal(status.setupTokenRequired, true);
+      assert.equal(status.setupToken, undefined, 'the token itself is never sent to the client');
+
+      assert.equal((await setup(url, OWNER)).status, 403, 'no code');
+      assert.equal((await setup(url, { ...OWNER, setupToken: 'wrong' })).status, 403, 'wrong code');
+      assert.equal(
+        (await setup(url, { ...OWNER, setupToken: 'the-one-time-code' })).status,
+        201,
+        'correct code',
+      );
+    } finally {
+      delete process.env.SETUP_TOKEN;
+      srv.close();
+      fresh.close();
+    }
+  });
+
+  test('production refuses an unguarded bootstrap entirely', async () => {
+    process.env.NODE_ENV = 'production';
+    delete process.env.SETUP_TOKEN;
+    const { fresh, srv, url } = freshApp();
+    try {
+      const res = await setup(url, OWNER);
+      assert.equal(res.status, 403);
+      assert.match(((await res.json()) as any).error, /SETUP_TOKEN/);
+    } finally {
+      process.env.NODE_ENV = 'test';
+      srv.close();
+      fresh.close();
+    }
+  });
+});
+
+describe('login does not leak which addresses exist (H-02)', () => {
+  test('an unknown address and a wrong password are indistinguishable', async () => {
+    const unknown = await call('POST', '/api/auth/login', {
+      body: { email: 'nobody-at-all@example.com', password: 'whatever-123' },
+    });
+    const known = await call('POST', '/api/auth/login', {
+      body: { email: 'priya@phot.ai', password: 'wrong-password' },
+    });
+    assert.equal(unknown.status, known.status);
+    assert.deepEqual(unknown.body, known.body);
+  });
+
+  test('a Google-only account cannot be signed into with a password', async () => {
+    // Simulates an account created through Google: no password set.
+    db.prepare(
+      `INSERT INTO users (id, name, email, role, permission, password_hash, password_salt, google_sub, created_at)
+       VALUES ('google-only', 'Google Only', 'google-only@phot.ai', '', 'Editor', '', '', 'sub-x', ?)`,
+    ).run(new Date().toISOString());
+
+    for (const password of ['', ' ', 'anything', 'demo1234']) {
+      const res = await call('POST', '/api/auth/login', {
+        body: { email: 'google-only@phot.ai', password: password || 'x' },
+      });
+      assert.equal(res.status, 401, `empty stored hash must never verify (${password})`);
+      assert.equal(res.body.error, 'Email or password is incorrect.');
+    }
   });
 });

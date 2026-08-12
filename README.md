@@ -32,6 +32,11 @@ Everyone after the first account is created by an Owner from the **Team** screen
 (or the CLI). There is deliberately **no open sign-up** — the setup endpoint
 closes permanently as soon as one account exists.
 
+> **Deploying anywhere public?** Set `SETUP_TOKEN` to a random string first. The
+> setup screen then asks for it, so a stranger who finds the URL before you
+> cannot claim the Owner account. The server refuses to run open setup at all
+> when `NODE_ENV=production` and no token is set.
+
 Each person can change their own password from **Password** in the sidebar; doing
 so signs out their other sessions.
 
@@ -188,8 +193,11 @@ where it counts:
   cookie, stored server-side so they can expire and be revoked. `SESSION_SECRET`
   is mandatory in production.
 - **Passwords** are scrypt (N=2^15) with a per-user salt, compared in constant
-  time. Login answers identically for a wrong password and an unknown address,
-  so the endpoint cannot be used to enumerate accounts.
+  time. Login answers identically for a wrong password and an unknown address —
+  and does the same amount of hashing either way, against a dummy hash when the
+  address is unknown, so response timing cannot be used to enumerate accounts
+  either. An account with no password (Google-only) can never be signed into with
+  one, whatever is supplied.
 - **Per-section access is default-deny** and applied to reads *and* writes. A
   user without invoice access does not receive contract values, GST fields or
   invoices at all — the fields are absent from the payload, not merely unstyled —
@@ -201,6 +209,10 @@ where it counts:
 - **First-run setup is a bootstrap, not sign-up.** `POST /api/auth/setup` works
   only while the workspace has zero accounts and always creates an Owner; once
   one exists it returns 409 forever. Everything after that is invite-by-Owner.
+  The emptiness check and the insert are a single transaction, so two
+  simultaneous requests cannot both create an Owner. `SETUP_TOKEN` gates the
+  endpoint with a one-time code, compared in constant time, and is mandatory
+  under `NODE_ENV=production`.
 - **Password changes require the current password** and delete every other
   session for that user, so a borrowed session cannot be used to take an account
   over. Read-only accounts can still change their own password — that is a login
