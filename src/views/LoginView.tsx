@@ -1,5 +1,6 @@
 import { useState, type FormEvent } from 'react';
 import { Button } from '../ds/Button';
+import { GoogleButton, OrDivider } from '../ds/GoogleButton';
 import { Mark } from '../ds/Mark';
 import { useApp } from '../state/AppState';
 
@@ -45,6 +46,13 @@ export function LoginView() {
         <div className="page-subtitle" style={{ marginBottom: 20 }}>
           Use your workspace account.
         </div>
+
+        {state.googleEnabled && (
+          <>
+            <GoogleButton />
+            <OrDivider label="or sign in with email" />
+          </>
+        )}
 
         <label className="field">
           Email
@@ -93,20 +101,10 @@ export function LoginView() {
           {state.busy ? 'Signing in…' : 'Sign in'}
         </Button>
 
-        {import.meta.env.DEV && (
-          <div style={{ marginTop: 18, fontSize: 12, color: 'var(--ink-3)', lineHeight: 1.6 }}>
-            <strong style={{ color: 'var(--ink-2)' }}>Demo accounts</strong> (password{' '}
-            <code>demo1234</code>):
-            <br />
-            priya@phot.ai — Owner, full access
-            <br />
-            daniel@phot.ai — Editor, no invoice access
-            <br />
-            maya@phot.ai — Editor, no documents or follow-ups
-            <br />
-            tom@phot.ai — Viewer, read-only
-          </div>
-        )}
+        <div style={{ marginTop: 18, fontSize: 12, color: 'var(--ink-3)', lineHeight: 1.6 }}>
+          Accounts are created by a workspace Owner from the Team screen.
+          {state.googleEnabled && ' If yours was set up with Google, use the button above.'}
+        </div>
       </form>
     </div>
   );

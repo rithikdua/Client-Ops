@@ -1,9 +1,9 @@
 import { Router } from 'express';
 import { ACCESS_SECTIONS } from '../../../src/data/options';
 import type { Access } from '../../../src/data/types';
-import { hashPassword } from '../auth/passwords';
+import { createUser } from '../auth/accounts';
 import { requireSection, requireTeamAdmin, writeAccess } from '../auth/permissions';
-import { newId, transact, type Db } from '../db/index';
+import type { Db } from '../db/index';
 import { HttpError, notFound } from '../http/errors';
 import { accessSchema, teammateSchema } from '../http/validate';
 import { snapshotFor } from './clients';
@@ -26,26 +26,16 @@ export function teamRoutes(db: Db): Router {
   // Creating people and changing what they can see is Owner-only.
   router.post('/', requireSection('team'), requireTeamAdmin, (req, res) => {
     const input = teammateSchema.parse(req.body);
-    const taken = db.prepare('SELECT id FROM users WHERE email = ?').get(input.email);
-    if (taken) throw new HttpError(409, 'That email address is already in use.');
-
-    const id = newId();
-    const { hash, salt } = hashPassword(input.password);
-
-    transact(db, () => {
-      db.prepare(
-        `INSERT INTO users (id, name, email, role, permission, password_hash, password_salt, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-      ).run(id, input.name, input.email, input.role, input.permission, hash, salt, new Date().toISOString());
-      writeAccess(
-        db,
-        id,
-        input.access
-          ? toAccess(input.access)
-          : toAccess(Object.fromEntries(ACCESS_SECTIONS.map((s) => [s.key, true]))),
-      );
+    createUser(db, {
+      name: input.name,
+      email: input.email,
+      role: input.role,
+      permission: input.permission,
+      password: input.password,
+      access: input.access
+        ? toAccess(input.access)
+        : toAccess(Object.fromEntries(ACCESS_SECTIONS.map((s) => [s.key, true]))),
     });
-
     res.status(201).json(snapshotFor(db, req));
   });
 

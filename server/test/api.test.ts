@@ -11,10 +11,10 @@ process.env.SESSION_SECRET = 'test-secret';
 
 const { createApp } = await import('../src/app');
 const { openDb } = await import('../src/db/index');
-const { seedDatabase } = await import('../src/db/seed');
+const { seedDemoWorkspace } = await import('../src/db/seed');
 
 const db = openDb(':memory:');
-seedDatabase(db, { password: 'demo1234' });
+seedDemoWorkspace(db, { password: 'demo1234' });
 const server = createApp(db).listen(0);
 const port = (server.address() as AddressInfo).port;
 const base = `http://127.0.0.1:${port}`;
@@ -440,4 +440,243 @@ describe('uploads', () => {
     assert.equal((await fetch(base + url, { headers: { cookie: owner.cookie } })).status, 200);
     assert.equal((await fetch(base + url)).status, 401, 'uploads are not public');
   });
+});
+
+describe('first-run setup', () => {
+  test('is closed once the workspace has an account', async () => {
+    const status = await call('GET', '/api/auth/status');
+    assert.equal(status.body.needsSetup, false);
+
+    const res = await call('POST', '/api/auth/setup', {
+      body: { name: 'Intruder', email: 'intruder@phot.ai', password: 'password123' },
+    });
+    assert.equal(res.status, 409, 'setup must not be open self-registration');
+  });
+
+  test('on an empty workspace it creates an Owner, signs them in, then closes', async () => {
+    const fresh = openDb(':memory:');
+    const freshServer = createApp(fresh).listen(0);
+    const freshBase = `http://127.0.0.1:${(freshServer.address() as AddressInfo).port}`;
+    try {
+      const before = (await (await fetch(`${freshBase}/api/auth/status`)).json()) as any;
+      assert.equal(before.needsSetup, true);
+
+      const created = await fetch(`${freshBase}/api/auth/setup`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          name: 'Rithik Dua',
+          email: 'Rithik@Example.com',
+          role: 'Founder',
+          password: 'a-real-password',
+        }),
+      });
+      assert.equal(created.status, 201);
+      const snapshot = (await created.json()) as any;
+      assert.equal(snapshot.me.permission, 'Owner');
+      assert.equal(snapshot.me.email, 'rithik@example.com', 'email is normalised');
+      assert.equal(snapshot.me.canManageTeam, true);
+      assert.equal(snapshot.me.access.invoices, true, 'an Owner holds every section');
+      assert.deepEqual(snapshot.clients, [], 'a real workspace starts empty');
+      assert.ok(created.headers.getSetCookie?.()[0] ?? created.headers.get('set-cookie'));
+
+      const after = (await (await fetch(`${freshBase}/api/auth/status`)).json()) as any;
+      assert.equal(after.needsSetup, false, 'setup closes after the first account');
+
+      // The new Owner can sign in with the password they chose.
+      const login = await fetch(`${freshBase}/api/auth/login`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ email: 'rithik@example.com', password: 'a-real-password' }),
+      });
+      assert.equal(login.status, 200);
+    } finally {
+      freshServer.close();
+      fresh.close();
+    }
+  });
+
+  test('rejects a short password and a malformed email', async () => {
+    const fresh = openDb(':memory:');
+    const freshServer = createApp(fresh).listen(0);
+    const freshBase = `http://127.0.0.1:${(freshServer.address() as AddressInfo).port}`;
+    try {
+      for (const body of [
+        { name: 'A', email: 'a@b.com', password: 'short' },
+        { name: 'A', email: 'not-an-email', password: 'password123' },
+      ]) {
+        const res = await fetch(`${freshBase}/api/auth/setup`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify(body),
+        });
+        assert.equal(res.status, 400);
+      }
+    } finally {
+      freshServer.close();
+      fresh.close();
+    }
+  });
+});
+
+describe('changing your own password', () => {
+  test('requires the current password and invalidates other sessions', async () => {
+    const created = await call('POST', '/api/team', {
+      session: owner,
+      body: {
+        name: 'Nina Rao',
+        email: 'nina@phot.ai',
+        permission: 'Editor',
+        password: 'first-password',
+      },
+    });
+    assert.equal(created.status, 201);
+
+    const sessionA = await signIn('nina@phot.ai', 'first-password');
+    const sessionB = await signIn('nina@phot.ai', 'first-password');
+
+    // A wrong current password is refused.
+    assert.equal(
+      (
+        await call('POST', '/api/auth/password', {
+          session: sessionA,
+          body: { currentPassword: 'wrong', newPassword: 'second-password' },
+        })
+      ).status,
+      403,
+    );
+    // So is reusing the same one.
+    assert.equal(
+      (
+        await call('POST', '/api/auth/password', {
+          session: sessionA,
+          body: { currentPassword: 'first-password', newPassword: 'first-password' },
+        })
+      ).status,
+      400,
+    );
+
+    const changed = await call('POST', '/api/auth/password', {
+      session: sessionA,
+      body: { currentPassword: 'first-password', newPassword: 'second-password' },
+    });
+    assert.equal(changed.status, 200);
+
+    // The other session is gone, and the old password no longer works.
+    assert.equal((await call('GET', '/api/auth/session', { session: sessionB })).status, 401);
+    const oldLogin = await call('POST', '/api/auth/login', {
+      body: { email: 'nina@phot.ai', password: 'first-password' },
+    });
+    assert.equal(oldLogin.status, 401);
+    const newLogin = await call('POST', '/api/auth/login', {
+      body: { email: 'nina@phot.ai', password: 'second-password' },
+    });
+    assert.equal(newLogin.status, 200);
+  });
+
+  test('a read-only account may still change its own password', async () => {
+    const before = await call('GET', '/api/auth/session', { session: viewer });
+    assert.equal(before.body.me.canWrite, false);
+    const res = await call('POST', '/api/auth/password', {
+      session: viewer,
+      body: { currentPassword: 'demo1234', newPassword: 'viewer-new-password' },
+    });
+    assert.equal(res.status, 200, 'changing your login is not a data write');
+    viewer = await signIn('tom@phot.ai', 'viewer-new-password');
+  });
+
+  test('is refused while previewing as someone else', async () => {
+    await call('POST', '/api/auth/preview', { session: owner, body: { teammateId: 'tm2' } });
+    const res = await call('POST', '/api/auth/password', {
+      session: owner,
+      body: { currentPassword: 'demo1234', newPassword: 'whatever-123' },
+    });
+    assert.equal(res.status, 400);
+    await call('DELETE', '/api/auth/preview', { session: owner });
+  });
+});
+
+describe('Google sign-in endpoints', () => {
+  const clear = () => {
+    delete process.env.GOOGLE_CLIENT_ID;
+    delete process.env.GOOGLE_CLIENT_SECRET;
+  };
+  const configure = () => {
+    process.env.GOOGLE_CLIENT_ID = 'test-client.apps.googleusercontent.com';
+    process.env.GOOGLE_CLIENT_SECRET = 'test-secret';
+    process.env.GOOGLE_REDIRECT_URI = 'http://localhost:5173/api/auth/google/callback';
+  };
+
+  test('status reports it off, and the endpoint refuses, when unconfigured', async () => {
+    clear();
+    const status = await call('GET', '/api/auth/status');
+    assert.equal(status.body.googleEnabled, false);
+
+    const res = await fetch(`${base}/api/auth/google`, { redirect: 'manual' });
+    assert.equal(res.status, 501, 'no credentials means no Google endpoint');
+  });
+
+  test('once configured, status advertises it and the endpoint redirects to Google', async () => {
+    configure();
+    try {
+      const status = await call('GET', '/api/auth/status');
+      assert.equal(status.body.googleEnabled, true);
+
+      const res = await fetch(`${base}/api/auth/google`, { redirect: 'manual' });
+      assert.equal(res.status, 302);
+      const location = new URL(res.headers.get('location') ?? '');
+      assert.equal(location.host, 'accounts.google.com');
+      assert.equal(location.searchParams.get('client_id'), process.env.GOOGLE_CLIENT_ID);
+      assert.ok(location.searchParams.get('state'));
+      assert.equal(location.searchParams.get('code_challenge_method'), 'S256');
+
+      // The handshake values ride along in a signed, httpOnly cookie.
+      const cookie = res.headers.getSetCookie?.()[0] ?? res.headers.get('set-cookie') ?? '';
+      assert.match(cookie, /^clientops_oauth=/);
+      assert.match(cookie, /HttpOnly/i);
+    } finally {
+      clear();
+    }
+  });
+
+  test('the callback refuses a forged or expired handshake', async () => {
+    configure();
+    try {
+      // No cookie at all.
+      const noCookie = await fetch(`${freshCallback('some-code', 'some-state')}`, {
+        redirect: 'manual',
+      });
+      assert.equal(noCookie.status, 302);
+      assert.match(
+        decodeURIComponent(noCookie.headers.get('location') ?? ''),
+        /expired/,
+        'a callback with no handshake cookie is rejected',
+      );
+
+      // A real handshake cookie, but the state in the URL does not match it.
+      const started = await fetch(`${base}/api/auth/google`, { redirect: 'manual' });
+      const cookie = (started.headers.getSetCookie?.()[0] ?? '').split(';')[0];
+      const mismatched = await fetch(freshCallback('some-code', 'not-the-right-state'), {
+        redirect: 'manual',
+        headers: { cookie },
+      });
+      assert.match(
+        decodeURIComponent(mismatched.headers.get('location') ?? ''),
+        /did not match/,
+        'state mismatch is what blocks a forged callback',
+      );
+
+      // A cancelled consent screen reads as a cancellation, not an error page.
+      const denied = await fetch(`${base}/api/auth/google/callback?error=access_denied`, {
+        redirect: 'manual',
+      });
+      assert.match(decodeURIComponent(denied.headers.get('location') ?? ''), /cancelled/);
+    } finally {
+      clear();
+    }
+  });
+
+  function freshCallback(code: string, state: string): string {
+    return `${base}/api/auth/google/callback?code=${code}&state=${state}`;
+  }
 });

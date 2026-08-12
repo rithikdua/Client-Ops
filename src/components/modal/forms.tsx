@@ -230,6 +230,27 @@ export function TeammateForm() {
   );
 }
 
+export function ChangePasswordForm() {
+  const { state } = useApp();
+  // A Google-only account has no password yet, so there is none to confirm.
+  const hasPassword = state.me?.hasPassword ?? true;
+  return (
+    <>
+      <div style={{ fontSize: 13, color: 'var(--ink-3)', marginBottom: 4 }}>
+        {hasPassword
+          ? 'Changing your password signs out your other sessions.'
+          : 'You sign in with Google. Setting a password lets you sign in with your email as well.'}
+      </div>
+      {hasPassword && <TextField label="Current password" k="currentPassword" type="password" />}
+      <TextField label={hasPassword ? 'New password' : 'Password'} k="newPassword" type="password" />
+      <TextField label="Confirm password" k="confirmPassword" type="password" />
+      <div className="field-hint">
+        At least 8 characters{hasPassword ? ', and different from your current one.' : '.'}
+      </div>
+    </>
+  );
+}
+
 export function PermissionsForm() {
   const { actions } = useApp();
   const { form } = useModalForm();

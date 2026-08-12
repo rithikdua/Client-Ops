@@ -8,6 +8,7 @@ import { ClientForm } from './ClientForm';
 import {
   ActivityForm,
   AttachFileForm,
+  ChangePasswordForm,
   CompleteFollowUpForm,
   ContactForm,
   DeliverableForm,
@@ -114,6 +115,10 @@ export function ModalHost() {
     case 'taskPreview':
       title = 'Ticket';
       body = modal.task ? <TaskPreview task={modal.task} client={client} /> : null;
+      break;
+    case 'changePassword':
+      title = state.me?.hasPassword === false ? 'Set a password' : 'Change your password';
+      body = <ChangePasswordForm />;
       break;
   }
 

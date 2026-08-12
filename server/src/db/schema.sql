@@ -19,10 +19,18 @@ CREATE TABLE IF NOT EXISTS users (
   -- Owner: full control incl. team management. Editor: read/write data.
   -- Viewer: read-only.
   permission    TEXT NOT NULL CHECK (permission IN ('Owner', 'Editor', 'Viewer')),
-  password_hash TEXT NOT NULL,
-  password_salt TEXT NOT NULL,
+  -- Empty strings mean "no password set" — a Google-only account. Kept as ''
+  -- rather than NULL so the columns stay NOT NULL for older databases.
+  password_hash TEXT NOT NULL DEFAULT '',
+  password_salt TEXT NOT NULL DEFAULT '',
+  -- Google's stable subject id, linked on first Google sign-in. Google may let a
+  -- user change their address, so the subject is what identifies them long-term.
+  google_sub    TEXT,
   created_at    TEXT NOT NULL
 );
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_users_google_sub ON users(google_sub)
+  WHERE google_sub IS NOT NULL;
 
 -- One row per section a user may open. Absent row = denied.
 CREATE TABLE IF NOT EXISTS user_access (

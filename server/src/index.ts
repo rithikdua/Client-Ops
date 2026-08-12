@@ -1,26 +1,31 @@
 import { createApp } from './app';
+import { needsSetup } from './auth/accounts';
 import { DB_PATH, openDb } from './db/index';
-import { isSeeded, seedDatabase } from './db/seed';
+import { seedDemoWorkspace } from './db/seed';
 
 const PORT = Number(process.env.PORT ?? 8787);
+/** Demo data is opt-in; a real deployment starts empty. */
+const WANT_DEMO_DATA = /^(1|true|yes)$/i.test(process.env.SEED_DEMO_DATA ?? '');
 
 const db = openDb();
-const freshDatabase = !isSeeded(db);
-seedDatabase(db);
+if (WANT_DEMO_DATA) seedDemoWorkspace(db);
 
 const app = createApp(db);
 
 const server = app.listen(PORT, () => {
   console.log(`[client-ops] API listening on http://localhost:${PORT}`);
   console.log(`[client-ops] database: ${DB_PATH}`);
-  if (freshDatabase) {
+
+  if (needsSetup(db)) {
+    console.log('[client-ops] no accounts yet — open the app to create the first Owner account,');
+    console.log('[client-ops] or run: npm run create-user');
+    console.log('[client-ops] (to explore the sample workspace instead: npm run db:demo)');
+  } else if (WANT_DEMO_DATA) {
     console.log(
-      '[client-ops] seeded demo accounts (password "demo1234" unless SEED_PASSWORD was set):',
+      `[client-ops] demo workspace loaded — sign in as priya@phot.ai with the password "${
+        process.env.SEED_PASSWORD ?? 'demo1234'
+      }"`,
     );
-    console.log('[client-ops]   priya@phot.ai  Owner  · full access');
-    console.log('[client-ops]   daniel@phot.ai Editor · no invoice access');
-    console.log('[client-ops]   maya@phot.ai   Editor · no documents/follow-ups');
-    console.log('[client-ops]   tom@phot.ai    Viewer · read-only');
   }
 });
 

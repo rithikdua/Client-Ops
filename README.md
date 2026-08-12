@@ -16,8 +16,64 @@ cp .env.example .env     # optional in development
 npm run dev              # API on :8787, web on :5173 (proxied)
 ```
 
-Open http://localhost:5173 and sign in. On an empty database the server seeds
-four demo accounts, all with the password **`demo1234`**:
+Open http://localhost:5173. The database starts **empty**, so the app shows
+first-run setup: enter your name, work email and a password, and that first
+account becomes the workspace **Owner** with full access. You are signed in
+immediately and can start adding real clients.
+
+Prefer the terminal, or need a second Owner later?
+
+```bash
+npm run create-user -- --name "Your Name" --email you@company.com
+# password is prompted for, not echoed; --permission Owner|Editor|Viewer
+```
+
+Everyone after the first account is created by an Owner from the **Team** screen
+(or the CLI). There is deliberately **no open sign-up** — the setup endpoint
+closes permanently as soon as one account exists.
+
+Each person can change their own password from **Password** in the sidebar; doing
+so signs out their other sessions.
+
+### Google sign-in (optional)
+
+Blank credentials mean the button never appears, so this is entirely opt-in.
+
+1. **Google Cloud Console** → *APIs & Services* → *Credentials* → *Create
+   credentials* → *OAuth client ID* → **Web application**.
+2. Under **Authorised redirect URIs**, add exactly:
+   `http://localhost:5173/api/auth/google/callback`
+   (and your real domain for production — it must match `GOOGLE_REDIRECT_URI`).
+3. Put the client ID and secret in `.env`:
+
+```env
+GOOGLE_CLIENT_ID=…apps.googleusercontent.com
+GOOGLE_CLIENT_SECRET=…
+GOOGLE_REDIRECT_URI=http://localhost:5173/api/auth/google/callback
+GOOGLE_ALLOWED_DOMAINS=yourcompany.com   # optional but recommended
+```
+
+Restart and **Continue with Google** appears on the sign-in and setup screens.
+
+**A Google sign-in never creates an account by itself.** Everyone on earth has a
+Google account, so treating a successful Google login as permission to enter
+would hand the workspace to the internet. A Google identity can only attach to an
+account an Owner already created, matched on verified email — with one exception:
+on a completely empty workspace it stands in for first-run setup and becomes the
+Owner. Anyone else gets *"There is no Client Ops account for …; ask a workspace
+Owner to add you first."* Setting `GOOGLE_ALLOWED_DOMAINS` adds a second gate
+before that check even runs.
+
+### Want the sample data instead?
+
+To explore the design with six pre-populated client accounts and four teammates
+whose permissions differ:
+
+```bash
+npm run db:demo   # DESTRUCTIVE: wipes the database, then loads the sample workspace
+```
+
+That gives you these logins, all with the password `demo1234`:
 
 | Email | Permission | Sees |
 |---|---|---|
@@ -27,14 +83,17 @@ four demo accounts, all with the password **`demo1234`**:
 | tom@phot.ai | Viewer | Everything, read-only |
 
 Signing in as more than one of them is the fastest way to see the permission
-model working.
+model working. Demo data is never loaded automatically; set `SEED_DEMO_DATA=1` if
+you want the server to load it on an empty database at boot.
 
 ```bash
-npm test          # 35 server tests (node:test)
-npm run typecheck # both tsconfigs
-npm run build     # typecheck + production web build
-npm start         # production API (NODE_ENV=production)
-npm run db:reset  # wipe and re-seed — destructive
+npm test           # 57 server tests (node:test)
+npm run typecheck  # both tsconfigs
+npm run build      # typecheck + production web build
+npm start          # production API (NODE_ENV=production)
+npm run create-user # create an account from the terminal
+npm run db:reset   # DESTRUCTIVE: empty the database (back to first-run setup)
+npm run db:demo    # DESTRUCTIVE: empty it, then load the sample workspace
 ```
 
 ## Architecture
@@ -52,7 +111,7 @@ src/                 React + TypeScript frontend (Vite)
 
 server/              Node + Express + SQLite backend (TypeScript)
   src/db/            schema.sql, connection, seed data and seeder
-  src/auth/          scrypt passwords, signed-cookie sessions, permissions
+  src/auth/          scrypt passwords, signed-cookie sessions, permissions, Google OAuth
   src/domain/        invoice maths, snapshot builder, activity log, clock
   src/http/          error handling, Zod request schemas
   src/routes/        one router per resource
@@ -139,9 +198,29 @@ where it counts:
   affordances to match, and the client refuses the action locally too rather than
   firing a request it knows will fail.
 - **Team management and preview-as are Owner-only.**
+- **First-run setup is a bootstrap, not sign-up.** `POST /api/auth/setup` works
+  only while the workspace has zero accounts and always creates an Owner; once
+  one exists it returns 409 forever. Everything after that is invite-by-Owner.
+- **Password changes require the current password** and delete every other
+  session for that user, so a borrowed session cannot be used to take an account
+  over. Read-only accounts can still change their own password — that is a login
+  change, not a data write — but nobody can change one while previewing as
+  someone else.
 - **Preview-as is recorded on the session**, so while an Owner previews Daniel,
   the Owner's *own* requests are evaluated as Daniel — including being refused
   invoice data, and becoming read-only while previewing a Viewer.
+- **Google sign-in** uses the authorization-code flow with PKCE. The `state`
+  parameter, the OIDC `nonce` and the PKCE verifier travel in a signed, httpOnly,
+  ten-minute cookie, so a forged or replayed callback is rejected before any
+  token is exchanged. The ID token's issuer, audience, expiry, nonce and
+  `email_verified` are all checked; its signature is not, and does not need to
+  be, because the token is fetched from Google's token endpoint in a direct
+  server-to-server TLS call with no untrusted party in between. Only `openid
+  email profile` is requested, and `access_type=online` means no refresh token is
+  issued or stored.
+- **Google accounts are linked by subject, not address.** The stable `sub` is
+  stored on first use, so a later Google email change follows the same account
+  rather than creating a second one.
 - **Uploads** are limited to 10 MB and a vetted type list, stored under generated
   UUID filenames (a path-traversal filename cannot survive), and served only to
   signed-in users.
@@ -161,17 +240,28 @@ These weren't specified in the handoff, so they're called out rather than buried
    worth adding.
 3. **Snapshot-per-mutation** rather than granular responses — see the contract
    note above.
-4. **Seeded demo data and a shared demo password** so the app is explorable
-   immediately. `seedDatabase` refuses to run in production unless
-   `SEED_PASSWORD` is set, and only touches an empty database.
-5. **`TODAY` is the real clock now.** The frontend-only version froze it at
+4. **A real deployment starts empty; demo data is opt-in.** The first run shows
+   setup rather than seeded logins, because a shared demo password is the wrong
+   default for anything real. `npm run db:demo` (or `SEED_DEMO_DATA=1`) loads the
+   sample workspace, and seeding refuses to run in production unless
+   `SEED_PASSWORD` is set.
+5. **No self-service sign-up or password reset.** Accounts come from first-run
+   setup, an Owner, or the CLI — including via Google, which authenticates people
+   but never authorises new ones. A reset flow needs email delivery, which is a
+   dependency worth choosing deliberately rather than assuming — see Known gaps.
+6. **Google sign-in was written by hand against the OAuth spec** rather than
+   pulling in Passport or a similar framework. It is about 200 lines, needs no new
+   dependencies, and there is nothing hidden about which claims are trusted.
+   Accounts can hold a Google link, a password, or both; a Google-only account has
+   no password until the person sets one from **Password** in the sidebar.
+7. **`TODAY` is the real clock now.** The frontend-only version froze it at
    2026-08-06 so the seeded overdue states read correctly; with a server owning
    the dates, both sides use the real date.
-6. **Uploaded attachment filenames are not retained** — an upload is referenced
+8. **Uploaded attachment filenames are not retained** — an upload is referenced
    by URL and labelled "Uploaded file". Keeping the original name means storing
    attachments as `{url, name}` instead of a URL string, which is a schema change
    across all three layers.
-7. **Presentation settings** (density, sidebar rail, header glow) were
+9. **Presentation settings** (density, sidebar rail, header glow) were
    design-tool props, not in-app controls, so they are constants in
    `src/state/settings.ts` driven by `data-` attributes on the shell.
 
@@ -201,16 +291,46 @@ Honest list, in the order I would tackle them:
    permission redaction and the endpoints; the UI was verified with a scripted
    browser pass (below) that is not checked in, because it hard-codes this
    sandbox's Chromium path.
-4. **No password self-service** — no change-password, reset or invite flow; an
-   Owner sets a temporary password when creating an account.
+4. **No password reset or email invitations.** People can change their own
+   password, but a forgotten one has to be reset by an Owner (delete and recreate
+   the account) or via the CLI — there is no email delivery wired up, so no reset
+   link and no invitation mail. An Owner sets a temporary password and passes it
+   on out of band.
 5. **No pagination or rate limiting.** Both are fine at seed scale and neither is
-   safe at real scale.
-6. **Optimistic UI.** Mutations wait for the round trip; on a slow link the app
+   safe at real scale. Sign-in and Google callback are the endpoints most worth
+   rate limiting first.
+6. **Google sign-in has not been run against real Google credentials.** Every
+   step around it is tested, but the live token exchange needs a Google Cloud
+   OAuth client, which I cannot create. Expect to hit at most a redirect-URI
+   mismatch on the first attempt — the error Google shows names the exact URI it
+   expected, and it must equal `GOOGLE_REDIRECT_URI` character for character.
+7. **Optimistic UI.** Mutations wait for the round trip; on a slow link the app
    feels it.
 
 ## Verified
 
-`npm run typecheck`, `npm run build` and `npm test` (35 tests) all pass.
+`npm run typecheck`, `npm run build` and `npm test` (57 tests) all pass.
+
+The real-account path was driven in a browser against an empty database: setup
+appears instead of a sign-in form, rejects a short password and a mismatched
+confirmation, creates the Owner and signs them in, and leaves a genuinely empty
+workspace (no demo clients). Then: creating a first real client with correct GST
+(₹50,000 + 18% = ₹59,000), changing the password, confirming the **old** password
+no longer works and the new one does, and confirming the real data survived. The
+CLI was checked too, including its duplicate-email and short-password refusals.
+
+Google sign-in is covered by unit tests (the authorization URL carries PKCE and
+never leaks the verifier; the ID token's audience, issuer, expiry, nonce and
+verified-email claims are each enforced; a stranger's Google account is refused
+while an existing teammate's is linked, an empty workspace's first Google user
+becomes the Owner, and the domain allowlist gates everything) and by route tests
+(off and refusing when unconfigured, redirecting with a signed httpOnly handshake
+cookie when configured, rejecting a callback with no cookie or a mismatched
+state). In the browser: the button appears on both screens only when configured,
+a real click leaves for Google with PKCE and state intact, and a cancelled
+consent screen comes back as "Google sign-in was cancelled." rather than raw
+JSON. The one thing not exercised is a live round trip against Google itself,
+which needs real credentials — see Known gaps.
 
 A scripted browser pass against the real server covered: the login gate and a
 wrong-password error; session survival across reload and termination on sign-out;

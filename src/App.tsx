@@ -11,6 +11,7 @@ import { FollowUpsView } from './views/FollowUpsView';
 import { InvoicesView } from './views/InvoicesView';
 import { LoginView } from './views/LoginView';
 import { OverviewView } from './views/OverviewView';
+import { SetupView } from './views/SetupView';
 import { TeamView } from './views/TeamView';
 
 export function App() {
@@ -34,6 +35,7 @@ export function App() {
     );
   }
 
+  if (state.status === 'setup') return <SetupView />;
   if (state.status === 'signed-out') return <LoginView />;
 
   const selectedClient = state.clients.find((c) => c.id === state.selectedId);

@@ -39,6 +39,42 @@ export function parseCookie(value: string | undefined): string | null {
   return id;
 }
 
+export const OAUTH_COOKIE = 'clientops_oauth';
+/** The OAuth handshake is a single round trip; ten minutes is generous. */
+const OAUTH_TTL_MS = 10 * 60 * 1000;
+
+/**
+ * Signs a small JSON payload for a short-lived cookie — used to carry the OAuth
+ * state, nonce and PKCE verifier across the redirect to Google without storing
+ * them server-side.
+ */
+export function signPayload(payload: unknown): string {
+  const body = Buffer.from(JSON.stringify(payload), 'utf8').toString('base64url');
+  return `${body}.${createHmac('sha256', sessionSecret()).update(body).digest('hex')}`;
+}
+
+export function readSignedPayload<T>(raw: string | undefined): T | null {
+  if (!raw) return null;
+  const idx = raw.lastIndexOf('.');
+  if (idx <= 0) return null;
+  const body = raw.slice(0, idx);
+  const mac = Buffer.from(raw.slice(idx + 1), 'hex');
+  const expected = Buffer.from(
+    createHmac('sha256', sessionSecret()).update(body).digest('hex'),
+    'hex',
+  );
+  if (mac.length !== expected.length || !timingSafeEqual(mac, expected)) return null;
+  try {
+    return JSON.parse(Buffer.from(body, 'base64url').toString('utf8')) as T;
+  } catch {
+    return null;
+  }
+}
+
+export function oauthCookieOptions() {
+  return { ...cookieOptions(), maxAge: OAUTH_TTL_MS };
+}
+
 export interface SessionRow {
   id: string;
   user_id: string;
