@@ -213,3 +213,23 @@ CREATE TABLE IF NOT EXISTS follow_up_log (
 );
 
 CREATE INDEX IF NOT EXISTS idx_follow_up_log_follow_up ON follow_up_log(follow_up_id);
+
+-- Every uploaded file is an owned record. Without this, knowing a URL was the
+-- only thing needed to read someone else's attachment: unguessability is not
+-- authorization.
+CREATE TABLE IF NOT EXISTS uploads (
+  id            TEXT PRIMARY KEY,
+  -- Generated name on disk. Never the client's filename.
+  filename      TEXT NOT NULL UNIQUE,
+  original_name TEXT NOT NULL DEFAULT '',
+  mime          TEXT NOT NULL,
+  size_bytes    INTEGER NOT NULL,
+  -- The account this file belongs to, and the section that gates reading it.
+  client_id     TEXT REFERENCES clients(id) ON DELETE CASCADE,
+  section       TEXT NOT NULL DEFAULT 'clients',
+  uploaded_by   TEXT REFERENCES users(id) ON DELETE SET NULL,
+  created_at    TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_uploads_client ON uploads(client_id);
+CREATE INDEX IF NOT EXISTS idx_uploads_uploader ON uploads(uploaded_by);

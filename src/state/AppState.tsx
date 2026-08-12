@@ -677,9 +677,11 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
         const file = e.target.files && e.target.files[0];
         e.target.value = '';
         if (!file) return;
+        const clientId = stateRef.current.modal?.clientId;
+        if (!clientId) return;
         patch({ busy: true, error: null });
         api
-          .upload(file)
+          .upload(clientId, file)
           .then(({ url }) =>
             patch((s) => ({
               busy: false,

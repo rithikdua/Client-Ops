@@ -147,11 +147,14 @@ export const api = {
   reopenFollowUp: (id: string) => post<Snapshot>(`/followups/${id}/reopen`),
   removeFollowUp: (id: string) => del<Snapshot>(`/followups/${id}`),
 
-  /** Uploads a file and returns the URL to reference it by. */
-  async upload(file: File): Promise<{ url: string; name: string }> {
+  /**
+   * Uploads a file against a specific client and returns the URL to reference it
+   * by. The client is required so the server can authorize downloads later.
+   */
+  async upload(clientId: string, file: File): Promise<{ url: string; name: string }> {
     const form = new FormData();
     form.append('file', file);
-    const response = await fetch('/api/uploads', {
+    const response = await fetch(`/api/clients/${clientId}/uploads`, {
       method: 'POST',
       credentials: 'same-origin',
       body: form,

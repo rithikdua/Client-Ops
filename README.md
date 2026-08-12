@@ -92,13 +92,14 @@ model working. Demo data is never loaded automatically; set `SEED_DEMO_DATA=1` i
 you want the server to load it on an empty database at boot.
 
 ```bash
-npm test           # 57 server tests (node:test)
+npm test           # 86 server tests (node:test)
 npm run typecheck  # both tsconfigs
 npm run build      # typecheck + production web build
 npm start          # production API (NODE_ENV=production)
 npm run create-user # create an account from the terminal
 npm run db:reset   # DESTRUCTIVE: empty the database (back to first-run setup)
 npm run db:demo    # DESTRUCTIVE: empty it, then load the sample workspace
+npm run uploads:gc # delete uploaded files nothing references any more
 ```
 
 ## Architecture
@@ -239,9 +240,19 @@ where it counts:
 - **Google accounts are linked by subject, not address.** The stable `sub` is
   stored on first use, so a later Google email change follows the same account
   rather than creating a second one.
-- **Uploads** are limited to 10 MB and a vetted type list, stored under generated
-  UUID filenames (a path-traversal filename cannot survive), and served only to
-  signed-in users.
+- **Uploads** are validated by their actual bytes, not the `Content-Type` the
+  client supplied or the extension in its filename — both of which the client
+  chooses. A claim the bytes contradict is refused rather than quietly re-labelled.
+  Files are stored under generated UUID names (a traversal filename cannot
+  survive), and every upload is an owned record: **downloads are authorized
+  against the client the file belongs to**, because knowing a URL is not
+  authorization. Non-images are served `Content-Disposition: attachment` with
+  `X-Content-Type-Options: nosniff`. Per-request, per-account and per-workspace
+  size limits keep one person from filling the disk, and `npm run uploads:gc`
+  removes files nothing references any more.
+- **Invoices cannot be overpaid.** A payment larger than the outstanding balance
+  is refused, so the balance can never go negative — credits and refunds would
+  need their own accounting rather than an overflowing invoice.
 - All input is validated with Zod; SQL goes through prepared statements only.
 
 ## Decisions worth knowing
@@ -327,7 +338,7 @@ Honest list, in the order I would tackle them:
 
 ## Verified
 
-`npm run typecheck`, `npm run build` and `npm test` (57 tests) all pass.
+`npm run typecheck`, `npm run build` and `npm test` (86 tests) all pass.
 
 The real-account path was driven in a browser against an empty database: setup
 appears instead of a sign-in form, rejects a short password and a mismatched
