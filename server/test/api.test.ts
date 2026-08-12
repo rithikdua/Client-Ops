@@ -972,3 +972,126 @@ describe('the snapshot withholds every denied section, not just money (C-03)', (
     assert.deepEqual(res.body.followUps, [], 'follow-ups denied');
   });
 });
+
+describe('a partial money PATCH cannot corrupt a contract (C-04)', () => {
+  /** A client with a known contract, created fresh so assertions are exact. */
+  async function contractClient(name: string) {
+    const res = await call('POST', '/api/clients', {
+      session: owner,
+      body: {
+        name,
+        health: 'Active',
+        stage: 'Live',
+        billingCycle: 'Annual',
+        startDate: '2026-01-01',
+        baseAmount: 1000000,
+        gstPercent: 18,
+        gstMode: 'excluded',
+      },
+    });
+    assert.equal(res.status, 201);
+    const client = res.body.clients.find((c: any) => c.name === name);
+    assert.equal(client.baseAmount, 100000000, 'base is ten lakh in paise');
+    assert.equal(client.contractValue, 118000000);
+    return client.id;
+  }
+
+  test('changing only the GST rate keeps the stored base amount', async () => {
+    const id = await contractClient('Merge Test A');
+    const res = await call('PATCH', `/api/clients/${id}`, {
+      session: owner,
+      body: { gstPercent: 12 },
+    });
+    assert.equal(res.status, 200);
+
+    const after = res.body.clients.find((c: any) => c.id === id);
+    assert.equal(after.baseAmount, 100000000, 'the base must survive the patch');
+    assert.equal(after.gstPercent, 12);
+    assert.equal(after.gstAmount, 12000000, '12% of ten lakh');
+    assert.equal(after.contractValue, 112000000);
+  });
+
+  test('changing only the GST treatment keeps base and rate', async () => {
+    const id = await contractClient('Merge Test B');
+    const res = await call('PATCH', `/api/clients/${id}`, {
+      session: owner,
+      body: { gstMode: 'included' },
+    });
+    const after = res.body.clients.find((c: any) => c.id === id);
+    assert.equal(after.baseAmount, 100000000);
+    assert.equal(after.gstPercent, 18);
+    assert.equal(after.gstMode, 'included');
+    // Inclusive: the total is the base, and the tax is worked back out of it.
+    assert.equal(after.contractValue, 100000000);
+    assert.equal(after.gstAmount, 15254237);
+  });
+
+  test('changing an unrelated field leaves the money untouched', async () => {
+    const id = await contractClient('Merge Test C');
+    const res = await call('PATCH', `/api/clients/${id}`, {
+      session: owner,
+      body: { industry: 'Logistics' },
+    });
+    const after = res.body.clients.find((c: any) => c.id === id);
+    assert.equal(after.industry, 'Logistics');
+    assert.equal(after.baseAmount, 100000000);
+    assert.equal(after.contractValue, 118000000);
+  });
+
+  test('gstMode alone is money-sensitive and needs invoice access', async () => {
+    const id = await contractClient('Merge Test D');
+    const res = await call('PATCH', `/api/clients/${id}`, {
+      session: noInvoices,
+      body: { gstMode: 'included' },
+    });
+    assert.equal(res.status, 403, 'gstMode must be gated like baseAmount and gstPercent');
+
+    const check = await call('GET', '/api/auth/session', { session: owner });
+    const after = check.body.clients.find((c: any) => c.id === id);
+    assert.equal(after.contractValue, 118000000, 'and the value is unchanged');
+  });
+});
+
+describe('activity authorship cannot be forged (H-13)', () => {
+  test('a client-supplied author is ignored in favour of the session', async () => {
+    const res = await call('POST', '/api/clients/c1/activity', {
+      session: noInvoices,
+      body: { note: 'Approved payment', author: 'Priya Shah' },
+    });
+    assert.equal(res.status, 201);
+    const entry = res.body.clients.find((c: any) => c.id === 'c1').activity[0];
+    assert.equal(entry.note, 'Approved payment');
+    assert.equal(entry.author, 'Daniel Cho', 'the signed-in user is the author');
+  });
+});
+
+describe('dates must be real (M-01)', () => {
+  test('a well-shaped but impossible date is rejected', async () => {
+    for (const bad of ['2026-99-99', '2026-02-31', '2026-13-01', '2026-00-10']) {
+      const res = await call('POST', '/api/clients/c1/deliverables', {
+        session: owner,
+        body: { title: 'Bad date', dueDate: bad },
+      });
+      assert.equal(res.status, 400, `${bad} must be refused`);
+    }
+    // A leap day in a leap year is fine; in a common year it is not.
+    assert.equal(
+      (
+        await call('POST', '/api/clients/c1/deliverables', {
+          session: owner,
+          body: { title: 'Leap day', dueDate: '2028-02-29' },
+        })
+      ).status,
+      201,
+    );
+    assert.equal(
+      (
+        await call('POST', '/api/clients/c1/deliverables', {
+          session: owner,
+          body: { title: 'Not a leap day', dueDate: '2027-02-29' },
+        })
+      ).status,
+      400,
+    );
+  });
+});

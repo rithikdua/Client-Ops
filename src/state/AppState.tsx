@@ -542,8 +542,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       openAddDocument: (clientId) =>
         openModal({ type: 'document', clientId, form: { name: '', type: 'Contract', fileUrl: '', source: 'us' } }),
 
-      openAddActivity: (clientId) =>
-        openModal({ type: 'activity', clientId, form: { note: '', author: firstTeamName() } }),
+      openAddActivity: (clientId) => openModal({ type: 'activity', clientId, form: { note: '' } }),
 
       openAddTeammate: () =>
         openModal({
@@ -861,10 +860,9 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
             );
             return;
           case 'activity':
-            void run(
-              () => api.addActivity(modal.clientId!, { note: f.note ?? '', author: f.author ?? '' }),
-              { onSuccess: closed },
-            );
+            void run(() => api.addActivity(modal.clientId!, { note: f.note ?? '' }), {
+              onSuccess: closed,
+            });
             return;
           case 'task': {
             const body = {

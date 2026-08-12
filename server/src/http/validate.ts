@@ -15,8 +15,24 @@ import { isSafeUrl, UNSAFE_URL_MESSAGE } from '../../../src/lib/urls';
 
 const enumOf = <T extends string>(values: readonly T[]) => z.enum(values as unknown as [T, ...T[]]);
 
-/** Calendar day, `YYYY-MM-DD`. */
-export const isoDate = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Expected a YYYY-MM-DD date.');
+/**
+ * A real calendar day, `YYYY-MM-DD`. The shape check alone would accept
+ * 2026-99-99 and 2026-02-31, so the parsed date has to round-trip back to the
+ * same string.
+ */
+export const isoDate = z
+  .string()
+  .regex(/^\d{4}-\d{2}-\d{2}$/, 'Expected a YYYY-MM-DD date.')
+  .refine(
+    (v) => {
+      const parsed = new Date(v + 'T00:00:00Z');
+      // toISOString() throws on an Invalid Date, which would surface as a 500,
+      // so check the timestamp before formatting it.
+      if (Number.isNaN(parsed.getTime())) return false;
+      return parsed.toISOString().slice(0, 10) === v;
+    },
+    { message: 'That is not a real date.' },
+  );
 const optionalDate = z.union([isoDate, z.literal('')]).optional();
 
 /** Money arrives as whole currency units and is converted to minor units. */
@@ -141,7 +157,7 @@ export const documentSchema = z.object({
 
 export const activitySchema = z.object({
   note: text(4000).min(1, 'A note is required.'),
-  author: text(120).default(''),
+  // No `author`: the server records whoever is signed in.
 });
 
 export const taskSchema = z.object({
