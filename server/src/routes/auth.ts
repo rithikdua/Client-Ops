@@ -131,7 +131,7 @@ export function authRoutes(db: Db): Router {
 
       try {
         const { idToken } = await exchangeCode(config, code, pending.verifier);
-        const profile = validateClaims(readIdToken(idToken), config, pending.nonce);
+        const profile = validateClaims(await readIdToken(idToken), config, pending.nonce);
         const userId = resolveGoogleUser(db, profile, config);
 
         const sessionId = createSession(db, userId);

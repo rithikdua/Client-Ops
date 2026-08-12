@@ -92,7 +92,7 @@ model working. Demo data is never loaded automatically; set `SEED_DEMO_DATA=1` i
 you want the server to load it on an empty database at boot.
 
 ```bash
-npm test           # 97 server tests (node:test)
+npm test           # 108 server tests (node:test)
 npm run typecheck  # both tsconfigs
 npm run build      # typecheck + production web build
 npm start          # production API (NODE_ENV=production)
@@ -241,12 +241,14 @@ where it counts:
 - **Google sign-in** uses the authorization-code flow with PKCE. The `state`
   parameter, the OIDC `nonce` and the PKCE verifier travel in a signed, httpOnly,
   ten-minute cookie, so a forged or replayed callback is rejected before any
-  token is exchanged. The ID token's issuer, audience, expiry, nonce and
-  `email_verified` are all checked; its signature is not, and does not need to
-  be, because the token is fetched from Google's token endpoint in a direct
-  server-to-server TLS call with no untrusted party in between. Only `openid
-  email profile` is requested, and `access_type=online` means no refresh token is
-  issued or stored.
+  token is exchanged. The ID token is **fully verified**: the RS256 signature
+  against Google's published JWKS (cached, honouring the endpoint's own
+  `max-age`, re-fetched once on an unknown key id so rotation is not an outage),
+  with the algorithm pinned so `alg: none` and HMAC-confusion attempts are
+  refused. Issuer, audience, nonce and `email_verified` are checked, and a token
+  with **no** `exp` is rejected rather than treated as valid forever. Only
+  `openid email profile` is requested, and `access_type=online` means no refresh
+  token is issued or stored.
 - **Google accounts are linked by subject, not address.** The stable `sub` is
   stored on first use, so a later Google email change follows the same account
   rather than creating a second one.
@@ -337,10 +339,12 @@ Honest list, in the order I would tackle them:
    on out of band.
 5. **No pagination.** Fine at seed scale, not at real scale.
 6. **Google sign-in has not been run against real Google credentials.** Every
-   step around it is tested, but the live token exchange needs a Google Cloud
-   OAuth client, which I cannot create. Expect to hit at most a redirect-URI
-   mismatch on the first attempt — the error Google shows names the exact URI it
-   expected, and it must equal `GOOGLE_REDIRECT_URI` character for character.
+   step around it is tested — including signature verification, against a local
+   JWKS stub signed with a generated key — but the live token exchange needs a
+   Google Cloud OAuth client, which I cannot create. Expect to hit at most a
+   redirect-URI mismatch on the first attempt: the error Google shows names the
+   exact URI it expected, and it must equal `GOOGLE_REDIRECT_URI` character for
+   character.
 7. **Optimistic UI.** Mutations wait for the round trip; on a slow link the app
    feels it.
 
