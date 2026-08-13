@@ -2,6 +2,7 @@ import { ACCESS_SECTIONS } from '../../../src/data/options';
 import { countUsers } from '../auth/accounts';
 import { hashPassword } from '../auth/passwords';
 import { toMinor } from '../money';
+import { envString } from '../config';
 import { newId, transact, type Db } from './index';
 import { TEAM_SEED, seedClients, seedFollowUps } from './seedData';
 
@@ -24,7 +25,7 @@ export function isSeeded(db: Db): boolean {
 export function seedDemoWorkspace(db: Db, opts: { password?: string } = {}): void {
   if (isSeeded(db)) return;
 
-  const password = opts.password ?? process.env.SEED_PASSWORD ?? DEFAULT_SEED_PASSWORD;
+  const password = opts.password ?? envString('SEED_PASSWORD', DEFAULT_SEED_PASSWORD);
   if (process.env.NODE_ENV === 'production' && !process.env.SEED_PASSWORD) {
     throw new Error(
       'Refusing to seed demo data in production with the default password. Set SEED_PASSWORD.',

@@ -1,4 +1,5 @@
 import Database from 'better-sqlite3';
+import { envString } from '../config';
 import { randomUUID } from 'node:crypto';
 import { readFileSync, mkdirSync } from 'node:fs';
 import { dirname, join } from 'node:path';
@@ -9,8 +10,7 @@ const here = dirname(fileURLToPath(import.meta.url));
 export const SCHEMA_VERSION = 6;
 
 /** Absolute path to the SQLite file. Override with DATABASE_PATH. */
-export const DB_PATH =
-  process.env.DATABASE_PATH ?? join(here, '..', '..', 'data', 'client-ops.db');
+export const DB_PATH = envString('DATABASE_PATH', join(here, '..', '..', 'data', 'client-ops.db'));
 
 export type Db = Database.Database;
 

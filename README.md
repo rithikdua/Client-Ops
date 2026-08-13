@@ -104,7 +104,7 @@ model working. Demo data is never loaded automatically; set `SEED_DEMO_DATA=1` i
 you want the server to load it on an empty database at boot.
 
 ```bash
-npm test           # 181 server tests (node:test)
+npm test           # 188 server tests (node:test)
 npm run typecheck  # both tsconfigs
 npm run build      # typecheck + production web build
 npm start          # production API (NODE_ENV=production)
@@ -341,6 +341,14 @@ where it counts:
   **No CSP yet**: almost every element in this app carries an inline `style`
   attribute, so a policy that actually helps needs a styling refactor rather than
   `unsafe-inline`, and that is tracked as its own change.
+- **Configuration is validated at startup, and blank means unset.** `Number('')`
+  is `0`, not a missing value, so the blank placeholders this repo's own
+  `.env.example` shipped used to set the upload limit to zero bytes and the
+  password-reset lifetime to zero milliseconds — both indistinguishable from a
+  broken feature. Every environment read now goes through `server/src/config.ts`:
+  blank and whitespace mean "use the default", an unparseable or out-of-range
+  value stops the process with a message naming the variable, and flags accept
+  only real true/false spellings.
 - All input is validated with Zod; SQL goes through prepared statements only.
 
 ## Decisions worth knowing
