@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { requireSection, requireWrite } from '../auth/permissions';
 import { newId, transact, type Db } from '../db/index';
 import { logSystemActivity, todayISO } from '../domain/activity';
+import { audit } from '../domain/audit';
 import { notFound } from '../http/errors';
 import { contactSchema } from '../http/validate';
 import { assertClient, snapshotFor } from './clients';
@@ -26,10 +27,24 @@ export function contactRoutes(db: Db): Router {
   router.delete('/:contactId', requireWrite, (req, res) => {
     const { clientId, contactId } = req.params as { clientId: string; contactId: string };
     assertClient(db, clientId);
-    const result = db
-      .prepare('DELETE FROM contacts WHERE id = ? AND client_id = ?')
-      .run(contactId, clientId);
-    if (result.changes === 0) throw notFound('Contact');
+    // Read the name before deleting: afterwards there is nothing to log.
+    const existing = db
+      .prepare('SELECT name FROM contacts WHERE id = ? AND client_id = ?')
+      .get(contactId, clientId) as { name: string } | undefined;
+    if (!existing) throw notFound('Contact');
+
+    transact(db, () => {
+      db.prepare('DELETE FROM contacts WHERE id = ? AND client_id = ?').run(contactId, clientId);
+      logSystemActivity(db, clientId, `Contact "${existing.name}" removed`, req.actor!.name);
+      audit(db, req, {
+        action: 'contact.delete',
+        targetType: 'contact',
+        targetId: contactId,
+        targetLabel: existing.name,
+        detail: `client ${clientId}`,
+      });
+    });
+
     res.json(snapshotFor(db, req));
   });
 

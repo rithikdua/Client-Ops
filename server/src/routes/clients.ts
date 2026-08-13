@@ -2,6 +2,7 @@ import { Router, type Request } from 'express';
 import { requireSection, requireWrite } from '../auth/permissions';
 import { newId, transact, type Db } from '../db/index';
 import { logSystemActivity, todayISO } from '../domain/activity';
+import { audit } from '../domain/audit';
 import { buildSnapshot } from '../domain/snapshot';
 import { HttpError, notFound } from '../http/errors';
 import { clientPatchSchema, clientSchema } from '../http/validate';
@@ -214,9 +215,42 @@ export function clientRoutes(db: Db): Router {
     res.json(snapshotFor(db, req));
   });
 
+  /**
+   * Deleting a client cascades through its contacts, invoices, payments,
+   * deliverables, documents, tasks and its own activity feed. There is nowhere
+   * left to log it afterwards, which is exactly why the audit trail exists: the
+   * counts go in before the rows are gone.
+   */
   router.delete('/:clientId', requireSection('clients'), requireWrite, (req, res) => {
-    assertClient(db, req.params.clientId);
-    db.prepare('DELETE FROM clients WHERE id = ?').run(req.params.clientId);
+    const { clientId } = req.params;
+    assertClient(db, clientId);
+    const client = db.prepare('SELECT name FROM clients WHERE id = ?').get(clientId) as {
+      name: string;
+    };
+    const counts = db
+      .prepare(
+        `SELECT
+           (SELECT COUNT(*) FROM invoices WHERE client_id = ?)     AS invoices,
+           (SELECT COUNT(*) FROM contacts WHERE client_id = ?)     AS contacts,
+           (SELECT COUNT(*) FROM deliverables WHERE client_id = ?) AS deliverables,
+           (SELECT COUNT(*) FROM documents WHERE client_id = ?)    AS documents,
+           (SELECT COUNT(*) FROM tasks WHERE client_id = ?)        AS tasks`,
+      )
+      .get(clientId, clientId, clientId, clientId, clientId) as Record<string, number>;
+
+    transact(db, () => {
+      db.prepare('DELETE FROM clients WHERE id = ?').run(clientId);
+      audit(db, req, {
+        action: 'client.delete',
+        targetType: 'client',
+        targetId: clientId,
+        targetLabel: client.name,
+        detail: Object.entries(counts)
+          .map(([key, n]) => `${n} ${key}`)
+          .join(', '),
+      });
+    });
+
     res.json(snapshotFor(db, req));
   });
 

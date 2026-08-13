@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url';
 
 const here = dirname(fileURLToPath(import.meta.url));
 
-export const SCHEMA_VERSION = 4;
+export const SCHEMA_VERSION = 5;
 
 /** Absolute path to the SQLite file. Override with DATABASE_PATH. */
 export const DB_PATH =
@@ -48,6 +48,27 @@ export function openDb(path: string = DB_PATH): Db {
  * existing table has to be applied here too.
  */
 function migrate(db: Db, from: number): void {
+  if (from < 5) {
+    // v5: audit trail for deletions and account administration.
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS audit_log (
+        id           TEXT PRIMARY KEY,
+        at           TEXT NOT NULL,
+        actor_id     TEXT,
+        actor_name   TEXT NOT NULL DEFAULT '',
+        actor_email  TEXT NOT NULL DEFAULT '',
+        acting_as_id TEXT,
+        action       TEXT NOT NULL,
+        target_type  TEXT NOT NULL DEFAULT '',
+        target_id    TEXT NOT NULL DEFAULT '',
+        target_label TEXT NOT NULL DEFAULT '',
+        detail       TEXT NOT NULL DEFAULT '',
+        ip           TEXT NOT NULL DEFAULT ''
+      );
+      CREATE INDEX IF NOT EXISTS idx_audit_log_at ON audit_log(at);
+      CREATE INDEX IF NOT EXISTS idx_audit_log_actor ON audit_log(actor_id);
+    `);
+  }
   if (from < 4) {
     // v4: credential lifecycle — forced password change and reset links.
     const userColumns = db.prepare('PRAGMA table_info(users)').all() as { name: string }[];

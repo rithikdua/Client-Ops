@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { requireSection, requireWrite } from '../auth/permissions';
 import { newId, transact, type Db } from '../db/index';
 import { addDaysISO, todayISO } from '../domain/activity';
+import { audit } from '../domain/audit';
 import { notFound } from '../http/errors';
 import { completeFollowUpSchema, followUpSchema } from '../http/validate';
 import { snapshotFor } from './clients';
@@ -98,9 +99,26 @@ export function followUpRoutes(db: Db): Router {
     res.json(snapshotFor(db, req));
   });
 
+  // A follow-up belongs to no client until it becomes one, so there is no
+  // activity feed to log this in — the audit trail is the only record.
   router.delete('/:followUpId', requireWrite, (req, res) => {
-    const result = db.prepare('DELETE FROM follow_ups WHERE id = ?').run(req.params.followUpId);
-    if (result.changes === 0) throw notFound('Follow-up');
+    const { followUpId } = req.params;
+    const existing = db
+      .prepare('SELECT name, company_name, status FROM follow_ups WHERE id = ?')
+      .get(followUpId) as { name: string; company_name: string; status: string } | undefined;
+    if (!existing) throw notFound('Follow-up');
+
+    transact(db, () => {
+      db.prepare('DELETE FROM follow_ups WHERE id = ?').run(followUpId);
+      audit(db, req, {
+        action: 'followup.delete',
+        targetType: 'followup',
+        targetId: followUpId,
+        targetLabel: existing.company_name ? `${existing.name} (${existing.company_name})` : existing.name,
+        detail: `was ${existing.status}`,
+      });
+    });
+
     res.json(snapshotFor(db, req));
   });
 
