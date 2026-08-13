@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url';
 
 const here = dirname(fileURLToPath(import.meta.url));
 
-export const SCHEMA_VERSION = 5;
+export const SCHEMA_VERSION = 6;
 
 /** Absolute path to the SQLite file. Override with DATABASE_PATH. */
 export const DB_PATH =
@@ -48,6 +48,23 @@ export function openDb(path: string = DB_PATH): Db {
  * existing table has to be applied here too.
  */
 function migrate(db: Db, from: number): void {
+  if (from < 6) {
+    // v6: an attachment belongs to the section it is attached to, not always to
+    // `clients`. Existing rows are relabelled from whatever references them, so
+    // an invoices-only teammate can open an invoice's own PDF. Filenames are
+    // generated UUIDs, which makes the suffix match safe.
+    for (const [section, table, column] of [
+      ['invoices', 'invoices', 'file_url'],
+      ['deliverables', 'deliverables', 'file_url'],
+      ['documents', 'documents', 'url'],
+    ] as const) {
+      db.prepare(
+        `UPDATE uploads SET section = ?
+          WHERE section = 'clients'
+            AND EXISTS (SELECT 1 FROM ${table} WHERE ${column} LIKE '%' || uploads.filename)`,
+      ).run(section);
+    }
+  }
   if (from < 5) {
     // v5: audit trail for deletions and account administration.
     db.exec(`

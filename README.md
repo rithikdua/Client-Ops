@@ -104,7 +104,7 @@ model working. Demo data is never loaded automatically; set `SEED_DEMO_DATA=1` i
 you want the server to load it on an empty database at boot.
 
 ```bash
-npm test           # 170 server tests (node:test)
+npm test           # 173 server tests (node:test)
 npm run typecheck  # both tsconfigs
 npm run build      # typecheck + production web build
 npm start          # production API (NODE_ENV=production)
@@ -274,6 +274,13 @@ where it counts:
 - **Google accounts are linked by subject, not address.** The stable `sub` is
   stored on first use, so a later Google email change follows the same account
   rather than creating a second one.
+- **An attachment is owned by the section it is attached to.** Uploading goes to
+  `POST /api/clients/:id/uploads/:section` (`clients`, `invoices`, `deliverables`
+  or `documents`), the section is authorized *before* the body is read, and it is
+  recorded on the file so every later download asks the same question the record
+  does — a finance teammate can open an invoice's own PDF without being granted
+  the whole client record. Existing rows are relabelled on upgrade from whatever
+  references them.
 - **Uploads** are validated by their actual bytes, not the `Content-Type` the
   client supplied or the extension in its filename — both of which the client
   chooses. A claim the bytes contradict is refused rather than quietly re-labelled.

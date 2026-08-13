@@ -159,12 +159,18 @@ export const api = {
 
   /**
    * Uploads a file against a specific client and returns the URL to reference it
-   * by. The client is required so the server can authorize downloads later.
+   * by. Both the client and the owning section are required: the server
+   * authorizes the upload against that section now, and every later download
+   * against the same one.
    */
-  async upload(clientId: string, file: File): Promise<{ url: string; name: string }> {
+  async upload(
+    clientId: string,
+    file: File,
+    section: 'clients' | 'invoices' | 'deliverables' | 'documents' = 'clients',
+  ): Promise<{ url: string; name: string }> {
     const form = new FormData();
     form.append('file', file);
-    const response = await fetch(`/api/clients/${clientId}/uploads`, {
+    const response = await fetch(`/api/clients/${clientId}/uploads/${section}`, {
       method: 'POST',
       credentials: 'same-origin',
       body: form,
