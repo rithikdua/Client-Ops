@@ -212,6 +212,11 @@ export const setupSchema = z.object({
   setupToken: z.string().max(200).default(''),
 });
 
+export const redeemResetSchema = z.object({
+  token: z.string().min(1, 'A reset link is required.').max(500),
+  newPassword: z.string().min(8, 'Use at least 8 characters.').max(200),
+});
+
 export const changePasswordSchema = z.object({
   // Empty is allowed only for a Google-only account that has no password yet;
   // the server checks which case applies.

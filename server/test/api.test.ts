@@ -56,6 +56,31 @@ let owner: Session;
 let noInvoices: Session;
 let viewer: Session;
 
+/**
+ * Creates a teammate and settles their password, returning a usable session.
+ * An Owner-created account starts with must_change_password set, so without this
+ * step every data request would (correctly) be refused.
+ */
+async function createTeammateSession(
+  body: Record<string, unknown>,
+  temporary = 'password-1234',
+  chosen = 'chosen-password-9',
+): Promise<Session> {
+  const created = await call('POST', '/api/team', {
+    session: owner,
+    body: { permission: 'Editor', password: temporary, ...body },
+  });
+  assert.equal(created.status, 201, `could not create ${String(body.email)}`);
+
+  const first = await signIn(String(body.email), temporary);
+  const settled = await call('POST', '/api/auth/password', {
+    session: first,
+    body: { currentPassword: temporary, newPassword: chosen },
+  });
+  assert.equal(settled.status, 200, 'the forced password change should succeed');
+  return signIn(String(body.email), chosen);
+}
+
 before(async () => {
   owner = await signIn('priya@phot.ai');
   noInvoices = await signIn('daniel@phot.ai');
@@ -480,18 +505,11 @@ describe('uploads are owned, content-checked and authorized (H-03..H-05)', () =>
     const { url } = (await res.json()) as { url: string };
 
     // Knowing the URL is not authorization: this user has no Clients access.
-    const created = await call('POST', '/api/team', {
-      session: owner,
-      body: {
-        name: 'File Outsider',
-        email: 'file-outsider@phot.ai',
-        permission: 'Editor',
-        password: 'password-1234',
-        access: { overview: true },
-      },
+    const outsider = await createTeammateSession({
+      name: 'File Outsider',
+      email: 'file-outsider@phot.ai',
+      access: { overview: true },
     });
-    assert.equal(created.status, 201);
-    const outsider = await signIn('file-outsider@phot.ai', 'password-1234');
     const denied = await fetch(base + url, { headers: { cookie: outsider.cookie } });
     assert.equal(denied.status, 403, 'a URL is not a capability');
 
@@ -847,16 +865,10 @@ describe('login does not leak which addresses exist (H-02)', () => {
 describe('the snapshot withholds every denied section, not just money (C-03)', () => {
   /** Signs in a purpose-made account with exactly the sections listed. */
   async function userWith(sections: string[], label: string) {
-    const email = `${label}@phot.ai`;
     const access: Record<string, boolean> = {};
     for (const s of ['overview', 'clients', 'invoices', 'deliverables', 'documents', 'team', 'followups', 'phonebook'])
       access[s] = sections.includes(s);
-    const created = await call('POST', '/api/team', {
-      session: owner,
-      body: { name: label, email, permission: 'Editor', password: 'password-1234', access },
-    });
-    assert.equal(created.status, 201, `could not create ${label}`);
-    return signIn(email, 'password-1234');
+    return createTeammateSession({ name: label, email: `${label}@phot.ai`, access });
   }
 
   test('deliverables are absent for a user whose Deliverables section is denied', async () => {
@@ -1115,5 +1127,281 @@ describe('an invoice cannot be overpaid (H-06)', () => {
         assert.ok(settled <= invoice.amount, `${invoice.number} is overpaid`);
       }
     }
+  });
+});
+
+describe('an Owner-set password must be replaced before use (H-09)', () => {
+  test('a new teammate is blocked from the workspace until they set their own', async () => {
+    const created = await call('POST', '/api/team', {
+      session: owner,
+      body: {
+        name: 'Temp Password',
+        email: 'temp-password@phot.ai',
+        permission: 'Editor',
+        password: 'owner-chose-this',
+      },
+    });
+    assert.equal(created.status, 201);
+
+    const session = await signIn('temp-password@phot.ai', 'owner-chose-this');
+
+    // They can see who they are — and that they are required to act.
+    const me = await call('GET', '/api/auth/session', { session });
+    assert.equal(me.status, 200);
+    assert.equal(me.body.me.mustChangePassword, true);
+
+    // But nothing else works while an administrator knows their password.
+    for (const [method, path] of [
+      ['GET', '/api/clients'],
+      ['GET', '/api/team'],
+      ['GET', '/api/followups'],
+      ['POST', '/api/clients/c1/tasks'],
+    ] as const) {
+      const res = await call(method, path, { session, body: method === 'POST' ? { title: 'x' } : undefined });
+      assert.equal(res.status, 403, `${method} ${path} must be refused`);
+      assert.match(res.body.error, /Set your own password/);
+    }
+
+    // Setting their own password clears it, in the same response.
+    const settled = await call('POST', '/api/auth/password', {
+      session,
+      body: { currentPassword: 'owner-chose-this', newPassword: 'my-own-password' },
+    });
+    assert.equal(settled.status, 200);
+    assert.equal(settled.body.me.mustChangePassword, false);
+
+    const after = await signIn('temp-password@phot.ai', 'my-own-password');
+    assert.equal((await call('GET', '/api/clients', { session: after })).status, 200);
+  });
+
+  test('signing out is still possible while blocked', async () => {
+    await call('POST', '/api/team', {
+      session: owner,
+      body: { name: 'Stuck', email: 'stuck@phot.ai', permission: 'Editor', password: 'owner-chose-this' },
+    });
+    const session = await signIn('stuck@phot.ai', 'owner-chose-this');
+    assert.equal((await call('POST', '/api/auth/logout', { session })).status, 204);
+  });
+
+  test('an account whose password its holder chose is not blocked', async () => {
+    // The seeded demo accounts and first-run setup both set their own.
+    const me = await call('GET', '/api/auth/session', { session: owner });
+    assert.equal(me.body.me.mustChangePassword, false);
+    assert.equal((await call('GET', '/api/clients', { session: owner })).status, 200);
+  });
+});
+
+describe('password reset links (M-10)', () => {
+  /**
+   * A fresh account per test — reusing one would make each test depend on which
+   * password the previous test happened to leave behind.
+   */
+  async function teammateNeedingReset(label: string) {
+    const email = `forgot-${label}@phot.ai`;
+    await createTeammateSession({ name: `Forgot ${label}`, email });
+    const team = await call('GET', '/api/team', { session: owner });
+    const row = team.body.team.find((t: any) => t.email === email || t.name === `Forgot ${label}`);
+    assert.ok(row, `the teammate ${email} exists`);
+    return { userId: row.id as string, email };
+  }
+
+  test('an Owner mints a one-time link, and redeeming it signs the person in', async () => {
+    const { userId, email } = await teammateNeedingReset('signin');
+
+    const issued = await call('POST', `/api/team/${userId}/reset-password`, { session: owner });
+    assert.equal(issued.status, 201);
+    const url = new URL(issued.body.resetUrl);
+    const token = url.searchParams.get('reset') ?? '';
+    assert.ok(token.length > 20, 'the link carries a long random token');
+    assert.ok(new Date(issued.body.expiresAt) > new Date(), 'and an expiry');
+
+    // The screen can check it before asking for a password.
+    const check = await call('GET', `/api/auth/reset?token=${encodeURIComponent(token)}`);
+    assert.equal(check.body.valid, true);
+
+    const redeemed = await call('POST', '/api/auth/reset', {
+      body: { token, newPassword: 'a-brand-new-password' },
+    });
+    assert.equal(redeemed.status, 200);
+    assert.equal(redeemed.body.me.email, email);
+    // Redeeming counts as choosing their own password, so nothing is blocked.
+    assert.equal(redeemed.body.me.mustChangePassword, false);
+
+    // The new password works; the old one does not.
+    await signIn(email, 'a-brand-new-password');
+    assert.equal(
+      (await call('POST', '/api/auth/login', { body: { email, password: 'chosen-password-9' } })).status,
+      401,
+    );
+  });
+
+  test('a link works exactly once', async () => {
+    const { userId } = await teammateNeedingReset('once');
+    const issued = await call('POST', `/api/team/${userId}/reset-password`, { session: owner });
+    const token = new URL(issued.body.resetUrl).searchParams.get('reset') ?? '';
+
+    assert.equal((await call('POST', '/api/auth/reset', { body: { token, newPassword: 'first-choice-9' } })).status, 200);
+
+    const second = await call('POST', '/api/auth/reset', {
+      body: { token, newPassword: 'second-choice-9' },
+    });
+    assert.equal(second.status, 400);
+    assert.match(second.body.error, /no longer valid/);
+    assert.equal((await call('GET', `/api/auth/reset?token=${encodeURIComponent(token)}`)).body.valid, false);
+  });
+
+  test('issuing a new link cancels the previous one', async () => {
+    const { userId } = await teammateNeedingReset('supersede');
+    const first = await call('POST', `/api/team/${userId}/reset-password`, { session: owner });
+    const firstToken = new URL(first.body.resetUrl).searchParams.get('reset') ?? '';
+    const second = await call('POST', `/api/team/${userId}/reset-password`, { session: owner });
+    const secondToken = new URL(second.body.resetUrl).searchParams.get('reset') ?? '';
+
+    assert.equal((await call('GET', `/api/auth/reset?token=${encodeURIComponent(firstToken)}`)).body.valid, false);
+    assert.equal((await call('GET', `/api/auth/reset?token=${encodeURIComponent(secondToken)}`)).body.valid, true);
+  });
+
+  test('an expired link is refused', async () => {
+    const { userId } = await teammateNeedingReset('expired');
+    const issued = await call('POST', `/api/team/${userId}/reset-password`, { session: owner });
+    const token = new URL(issued.body.resetUrl).searchParams.get('reset') ?? '';
+
+    // Age it past its expiry.
+    db.prepare("UPDATE password_resets SET expires_at = ? WHERE used_at IS NULL").run(
+      new Date(Date.now() - 1000).toISOString(),
+    );
+    assert.equal((await call('GET', `/api/auth/reset?token=${encodeURIComponent(token)}`)).body.valid, false);
+    const res = await call('POST', '/api/auth/reset', { body: { token, newPassword: 'too-late-now-9' } });
+    assert.equal(res.status, 400);
+  });
+
+  test('a made-up token is refused, and says nothing about why', async () => {
+    const invented = await call('POST', '/api/auth/reset', {
+      body: { token: 'not-a-real-token-at-all', newPassword: 'whatever-123' },
+    });
+    assert.equal(invented.status, 400);
+    assert.match(invented.body.error, /no longer valid/);
+    assert.equal((await call('GET', '/api/auth/reset?token=nonsense')).body.valid, false);
+  });
+
+  test('only the token hash is stored, so a database dump yields no usable links', async () => {
+    const { userId } = await teammateNeedingReset('hashed');
+    const issued = await call('POST', `/api/team/${userId}/reset-password`, { session: owner });
+    const token = new URL(issued.body.resetUrl).searchParams.get('reset') ?? '';
+
+    const rows = db.prepare('SELECT token_hash FROM password_resets').all() as { token_hash: string }[];
+    for (const row of rows) {
+      assert.notEqual(row.token_hash, token, 'the raw token must never be stored');
+    }
+    assert.ok(
+      rows.some((r) => /^[0-9a-f]{64}$/.test(r.token_hash)),
+      'stored as a SHA-256 hash',
+    );
+  });
+
+  test('redeeming invalidates the account’s other sessions', async () => {
+    const { userId, email } = await teammateNeedingReset('sessions');
+    const stale = await signIn(email, 'chosen-password-9');
+    assert.equal((await call('GET', '/api/clients', { session: stale })).status, 200);
+
+    const issued = await call('POST', `/api/team/${userId}/reset-password`, { session: owner });
+    const token = new URL(issued.body.resetUrl).searchParams.get('reset') ?? '';
+    await call('POST', '/api/auth/reset', { body: { token, newPassword: 'rotated-password-9' } });
+
+    assert.equal(
+      (await call('GET', '/api/clients', { session: stale })).status,
+      401,
+      'a session held by whoever locked them out must not survive',
+    );
+  });
+
+  test('only an Owner can issue one, and not for themselves', async () => {
+    const { userId } = await teammateNeedingReset('permissions');
+    assert.equal(
+      (await call('POST', `/api/team/${userId}/reset-password`, { session: noInvoices })).status,
+      403,
+    );
+    const own = await call('POST', '/api/team/tm1/reset-password', { session: owner });
+    assert.equal(own.status, 400, 'an Owner uses change-password for their own account');
+  });
+});
+
+/**
+ * Keep this suite LAST. It deliberately trips the per-IP limiter, which is shared
+ * by every request in this process, so anything signing in afterwards would get a
+ * 429 that has nothing to do with what it was testing.
+ */
+describe('brute force is throttled (H-01)', () => {
+  test('repeated wrong passwords eventually get 429 with Retry-After', async () => {
+    const email = 'throttle-target@phot.ai';
+    const created = await call('POST', '/api/team', {
+      session: owner,
+      body: { name: 'Throttle', email, permission: 'Viewer', password: 'password-1234' },
+    });
+    assert.equal(created.status, 201);
+
+    let sawTooMany = false;
+    let retryAfter = '';
+    for (let i = 0; i < 12; i++) {
+      const res = await fetch(`${base}/api/auth/login`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ email, password: `wrong-${i}` }),
+      });
+      if (res.status === 429) {
+        sawTooMany = true;
+        retryAfter = res.headers.get('retry-after') ?? '';
+        break;
+      }
+      assert.equal(res.status, 401, 'before the limit, a wrong password is just a 401');
+    }
+
+    assert.ok(sawTooMany, 'guessing must eventually be refused outright');
+    assert.match(retryAfter, /^\d+$/, 'Retry-After tells the client how long to wait');
+
+    // The correct password is refused too while the block holds — that is the
+    // point, and it is why the block is time-limited rather than permanent.
+    const evenWithTheRightPassword = await call('POST', '/api/auth/login', {
+      body: { email, password: 'password-1234' },
+    });
+    assert.equal(evenWithTheRightPassword.status, 429);
+  });
+
+  test('throttling reveals nothing about whether an account exists', async () => {
+    const hammer = async (email: string) => {
+      let status = 0;
+      for (let i = 0; i < 12; i++) {
+        const res = await call('POST', '/api/auth/login', { body: { email, password: `x-${i}` } });
+        status = res.status;
+        if (status === 429) break;
+      }
+      return status;
+    };
+    // Two addresses, one real and one not: both end up throttled the same way.
+    assert.equal(await hammer('maya@phot.ai'), 429);
+    assert.equal(await hammer('definitely-not-a-user@phot.ai'), 429);
+  });
+
+  test('a wrong current password on the change-password endpoint is throttled too', async () => {
+    const email = 'throttle-pw@phot.ai';
+    await call('POST', '/api/team', {
+      session: owner,
+      body: { name: 'PwThrottle', email, permission: 'Editor', password: 'password-1234' },
+    });
+    const session = await signIn(email, 'password-1234');
+
+    let sawTooMany = false;
+    for (let i = 0; i < 12; i++) {
+      const res = await call('POST', '/api/auth/password', {
+        session,
+        body: { currentPassword: `wrong-${i}`, newPassword: 'a-new-password' },
+      });
+      if (res.status === 429) {
+        sawTooMany = true;
+        break;
+      }
+      assert.equal(res.status, 403);
+    }
+    assert.ok(sawTooMany, 'guessing the current password must be throttled');
   });
 });

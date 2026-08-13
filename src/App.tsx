@@ -9,7 +9,9 @@ import { DeliverablesView } from './views/DeliverablesView';
 import { DocumentsView } from './views/DocumentsView';
 import { FollowUpsView } from './views/FollowUpsView';
 import { InvoicesView } from './views/InvoicesView';
+import { ForcePasswordView } from './views/ForcePasswordView';
 import { LoginView } from './views/LoginView';
+import { ResetPasswordView } from './views/ResetPasswordView';
 import { OverviewView } from './views/OverviewView';
 import { SetupView } from './views/SetupView';
 import { TeamView } from './views/TeamView';
@@ -35,8 +37,13 @@ export function App() {
     );
   }
 
+  if (state.status === 'reset' && state.resetToken) {
+    return <ResetPasswordView token={state.resetToken} />;
+  }
   if (state.status === 'setup') return <SetupView />;
   if (state.status === 'signed-out') return <LoginView />;
+  // A temporary password blocks the workspace until it is replaced.
+  if (state.me?.mustChangePassword) return <ForcePasswordView />;
 
   const selectedClient = state.clients.find((c) => c.id === state.selectedId);
 

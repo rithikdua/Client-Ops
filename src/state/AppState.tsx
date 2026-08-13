@@ -34,7 +34,7 @@ export type InvoiceStatusFilter = 'all' | 'Paid' | 'Partially Paid' | 'Pending' 
 export type FollowUpStatusFilter = 'pending' | 'done' | 'all';
 export type FollowUpSubTab = 'queue' | 'phonebook';
 
-export type LoadStatus = 'loading' | 'setup' | 'signed-out' | 'ready';
+export type LoadStatus = 'loading' | 'setup' | 'reset' | 'signed-out' | 'ready';
 
 export interface AppStateShape {
   /** Server-owned data. Empty until the first snapshot arrives. */
@@ -48,6 +48,8 @@ export interface AppStateShape {
   googleEnabled: boolean;
   /** Whether first-run setup requires the deployment's SETUP_TOKEN. */
   setupTokenRequired: boolean;
+  /** Reset token from the URL, when the app was opened through a reset link. */
+  resetToken: string | null;
   /** A mutation is in flight. */
   busy: boolean;
   /** Last error, surfaced as a dismissible banner. */
@@ -75,14 +77,30 @@ export interface AppStateShape {
   modal: ModalState | null;
 }
 
+/**
+ * Pulls the one-shot values the app can be opened with out of the URL.
+ *
+ * Read here rather than in an effect, and without touching the URL: React
+ * double-invokes effects in development (and may legitimately re-run them), so
+ * an effect that consumed the query string would find it empty the second time
+ * and lose the token.
+ */
+function readLaunchParams(): { resetToken: string | null; authError: string | null } {
+  if (typeof window === 'undefined') return { resetToken: null, authError: null };
+  const params = new URLSearchParams(window.location.search);
+  return { resetToken: params.get('reset'), authError: params.get('authError') };
+}
+
 const initialState = (): AppStateShape => ({
   me: null,
   clients: [],
   team: [],
   followUps: [],
-  status: 'loading',
+  // A reset link is known before anything is fetched, so the screen shows at once.
+  status: readLaunchParams().resetToken ? 'reset' : 'loading',
   googleEnabled: false,
   setupTokenRequired: false,
+  resetToken: readLaunchParams().resetToken,
   busy: false,
   error: null,
   view: 'overview',
@@ -120,6 +138,12 @@ export interface AppActions {
     setupToken: string;
   }) => Promise<void>;
   openChangePassword: () => void;
+  /** Sets your own password from the forced-change screen. */
+  setOwnPassword: (currentPassword: string, newPassword: string) => Promise<void>;
+  redeemReset: (token: string, newPassword: string) => Promise<void>;
+  dismissReset: () => void;
+  /** Owner-only: mints a one-time reset link for a teammate. */
+  createResetLink: (teammate: Teammate) => void;
   logout: () => void;
   reload: () => void;
   dismissError: () => void;
@@ -202,6 +226,8 @@ function fileFields(f: ModalForm) {
 
 export function AppStateProvider({ children }: { children: ReactNode }) {
   const [state, setState] = useState<AppStateShape>(initialState);
+  // Captured once, before anything can clear the address bar.
+  const [launchAuthError] = useState(() => readLaunchParams().authError);
   // Actions read the latest state without being re-created on every change.
   const stateRef = useRef(state);
   stateRef.current = state;
@@ -265,6 +291,18 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
   // lands on first-run setup rather than an unusable sign-in form.
   useEffect(() => {
     let cancelled = false;
+
+    // A reset link takes precedence over any existing session: whoever is holding
+    // it is here to set a password, not to resume someone else's tab. The token
+    // was captured during state init; all that is left is to get it out of the
+    // address bar so it is not shared or bookmarked.
+    if (stateRef.current.resetToken) {
+      if (window.location.search) window.history.replaceState({}, '', window.location.pathname);
+      return () => {
+        cancelled = true;
+      };
+    }
+
     api
       .session()
       .then((snapshot) => {
@@ -277,9 +315,11 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
           const { needsSetup, googleEnabled, setupTokenRequired } = await api
             .status()
             .catch(() => ({ needsSetup: false, googleEnabled: false, setupTokenRequired: false }));
-          // A failed Google round trip comes back as ?authError=… on the URL.
-          const authError = new URLSearchParams(window.location.search).get('authError');
-          if (authError) window.history.replaceState({}, '', window.location.pathname);
+          // A failed Google round trip comes back as ?authError=… on the URL. Read
+          // from the captured value, not the live URL, for the same reason as the
+          // reset token above.
+          const authError = launchAuthError;
+          if (window.location.search) window.history.replaceState({}, '', window.location.pathname);
           if (!cancelled) {
             patch({
               status: needsSetup ? 'setup' : 'signed-out',
@@ -335,6 +375,52 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
             form: { currentPassword: '', newPassword: '', confirmPassword: '' },
           },
         }),
+      setOwnPassword: async (currentPassword, newPassword) => {
+        patch({ busy: true, error: null });
+        try {
+          applySnapshot(await api.changePassword(currentPassword, newPassword));
+        } catch (err) {
+          patch({ busy: false, error: err instanceof Error ? err.message : 'Could not set the password.' });
+          throw err;
+        }
+      },
+      redeemReset: async (token, newPassword) => {
+        patch({ busy: true, error: null });
+        try {
+          applySnapshot(await api.redeemReset(token, newPassword), {
+            resetToken: null,
+            view: 'overview',
+            selectedId: null,
+          });
+        } catch (err) {
+          patch({ busy: false, error: err instanceof Error ? err.message : 'Could not set the password.' });
+          throw err;
+        }
+      },
+      dismissReset: () => patch({ status: 'signed-out', resetToken: null, error: null }),
+
+      createResetLink: (teammate) => {
+        patch({ busy: true, error: null });
+        api
+          .createResetLink(teammate.id)
+          .then(({ resetUrl, expiresAt }) =>
+            patch({
+              busy: false,
+              modal: {
+                type: 'resetLink',
+                teammateId: teammate.id,
+                form: { resetUrl, resetExpires: expiresAt, teammateName: teammate.name },
+              },
+            }),
+          )
+          .catch((err) =>
+            patch({
+              busy: false,
+              error: err instanceof Error ? err.message : 'Could not create a reset link.',
+            }),
+          );
+      },
+
       logout: () => {
         const { googleEnabled, setupTokenRequired } = stateRef.current;
         void api.logout().finally(() => {

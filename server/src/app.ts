@@ -1,6 +1,6 @@
 import cookieParser from 'cookie-parser';
 import express, { type Express } from 'express';
-import { buildActor, requireAuth } from './auth/permissions';
+import { buildActor, requireAuth, requirePasswordSettled } from './auth/permissions';
 import { getSession, parseCookie, SESSION_COOKIE } from './auth/sessions';
 import type { Db } from './db/index';
 import { errorHandler, HttpError } from './http/errors';
@@ -46,17 +46,21 @@ export function createApp(db: Db): Express {
   // is not a capability. Uploading happens under the client it belongs to.
   app.use('/api/uploads', uploadDownloadRoutes(db));
 
-  app.use('/api/clients', requireAuth, clientRoutes(db));
-  app.use('/api/clients/:clientId/contacts', requireAuth, contactRoutes(db));
-  app.use('/api/clients/:clientId/invoices', requireAuth, invoiceRoutes(db));
-  app.use('/api/clients/:clientId/deliverables', requireAuth, deliverableRoutes(db));
-  app.use('/api/clients/:clientId/documents', requireAuth, documentRoutes(db));
-  app.use('/api/clients/:clientId/activity', requireAuth, activityRoutes(db));
-  app.use('/api/clients/:clientId/tasks', requireAuth, taskRoutes(db));
-  app.use('/api/clients/:clientId/uploads', requireAuth, uploadRoutes(db));
-  app.use('/api/contacts', requireAuth, globalContactRoutes(db));
-  app.use('/api/team', requireAuth, teamRoutes(db));
-  app.use('/api/followups', requireAuth, followUpRoutes(db));
+  // Everything below needs a settled password as well as a session. /api/auth is
+  // deliberately above this line so signing out and setting a password still work.
+  const gate = [requireAuth, requirePasswordSettled];
+
+  app.use('/api/clients', gate, clientRoutes(db));
+  app.use('/api/clients/:clientId/contacts', gate, contactRoutes(db));
+  app.use('/api/clients/:clientId/invoices', gate, invoiceRoutes(db));
+  app.use('/api/clients/:clientId/deliverables', gate, deliverableRoutes(db));
+  app.use('/api/clients/:clientId/documents', gate, documentRoutes(db));
+  app.use('/api/clients/:clientId/activity', gate, activityRoutes(db));
+  app.use('/api/clients/:clientId/tasks', gate, taskRoutes(db));
+  app.use('/api/clients/:clientId/uploads', gate, uploadRoutes(db));
+  app.use('/api/contacts', gate, globalContactRoutes(db));
+  app.use('/api/team', gate, teamRoutes(db));
+  app.use('/api/followups', gate, followUpRoutes(db));
 
   app.use('/api', (_req, _res, next) => {
     next(new HttpError(404, 'Unknown endpoint.'));

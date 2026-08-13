@@ -2,6 +2,7 @@ import { createHash, randomBytes } from 'node:crypto';
 import { newId, transact, type Db } from '../db/index';
 import { HttpError } from '../http/errors';
 import { fullAccess } from './accounts';
+import { verifyJwtSignature } from './jwks';
 import { writeAccess } from './permissions';
 
 const AUTH_ENDPOINT = 'https://accounts.google.com/o/oauth2/v2/auth';
@@ -99,22 +100,16 @@ interface IdTokenClaims {
 }
 
 /**
- * Reads the ID token's payload.
+ * Verifies the ID token's RS256 signature against Google's published keys and
+ * returns its claims.
  *
- * The signature is not verified, and does not need to be: this token was just
- * fetched from Google's token endpoint over TLS in a direct server-to-server
- * call, so there is no untrusted party in between. (Google documents this
- * exception.) The claims below are still checked, because a mismatched audience
- * or a stale token would mean something is misconfigured.
+ * The token comes from a direct server-to-server TLS call, so the signature is
+ * belt-and-braces rather than the only thing standing between us and a forgery.
+ * It is checked regardless: the cost is one cached request, and it means this
+ * function stays safe if a token ever reaches it from somewhere less trusted.
  */
-export function readIdToken(idToken: string): IdTokenClaims {
-  const parts = idToken.split('.');
-  if (parts.length !== 3) throw new HttpError(502, 'Google returned a malformed ID token.');
-  try {
-    return JSON.parse(Buffer.from(parts[1], 'base64url').toString('utf8')) as IdTokenClaims;
-  } catch {
-    throw new HttpError(502, 'Google returned an unreadable ID token.');
-  }
+export async function readIdToken(idToken: string): Promise<IdTokenClaims> {
+  return (await verifyJwtSignature(idToken)) as IdTokenClaims;
 }
 
 export function validateClaims(
@@ -131,7 +126,10 @@ export function validateClaims(
   if (claims.nonce !== expectedNonce) {
     throw new HttpError(400, 'Sign-in request did not match. Please try again.');
   }
-  if (typeof claims.exp === 'number' && claims.exp * 1000 <= Date.now()) {
+  // A token with no expiry would be valid forever, so its absence is a failure,
+  // not something to skip over.
+  if (typeof claims.exp !== 'number') throw new HttpError(502, 'ID token has no expiry.');
+  if (claims.exp * 1000 <= Date.now()) {
     throw new HttpError(400, 'Sign-in took too long. Please try again.');
   }
   const email = (claims.email ?? '').trim().toLowerCase();

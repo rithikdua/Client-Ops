@@ -26,6 +26,9 @@ CREATE TABLE IF NOT EXISTS users (
   -- Google's stable subject id, linked on first Google sign-in. Google may let a
   -- user change their address, so the subject is what identifies them long-term.
   google_sub    TEXT,
+  -- Set when someone else chose this account's password. Until the owner of the
+  -- account replaces it, an administrator knows their credentials.
+  must_change_password INTEGER NOT NULL DEFAULT 0,
   created_at    TEXT NOT NULL
 );
 
@@ -233,3 +236,18 @@ CREATE TABLE IF NOT EXISTS uploads (
 
 CREATE INDEX IF NOT EXISTS idx_uploads_client ON uploads(client_id);
 CREATE INDEX IF NOT EXISTS idx_uploads_uploader ON uploads(uploaded_by);
+
+-- One-time password reset grants. Only the hash is stored: a leaked database
+-- must not hand out usable reset links.
+CREATE TABLE IF NOT EXISTS password_resets (
+  id         TEXT PRIMARY KEY,
+  user_id    TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  token_hash TEXT NOT NULL UNIQUE,
+  expires_at TEXT NOT NULL,
+  -- Stamped when redeemed, so a link cannot be used twice.
+  used_at    TEXT,
+  created_by TEXT REFERENCES users(id) ON DELETE SET NULL,
+  created_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_password_resets_user ON password_resets(user_id);

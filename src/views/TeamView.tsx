@@ -7,7 +7,7 @@ import { permissionColor } from '../lib/statusColors';
 import { useAccess } from '../state/access';
 import { useApp } from '../state/AppState';
 
-const GRID = '2fr 1.3fr 1fr 1fr 110px';
+const GRID = '2fr 1.3fr 1fr 1fr 170px';
 
 export function TeamView() {
   const { state, actions } = useApp();
@@ -76,6 +76,22 @@ export function TeamView() {
                     >
                       Manage
                     </span>
+                    {/* Recovery for a teammate who cannot get in, without
+                        deleting the account and losing its history. */}
+                    {t.id !== state.me?.id && (
+                      <span
+                        onClick={() => actions.createResetLink(t)}
+                        style={{
+                          fontSize: 12.5,
+                          color: 'var(--phot-purple)',
+                          cursor: 'pointer',
+                          fontWeight: 600,
+                          whiteSpace: 'nowrap',
+                        }}
+                      >
+                        Reset
+                      </span>
+                    )}
                     <TrashButton onClick={() => actions.removeTeammate(t.id)} />
                   </>
                 )}

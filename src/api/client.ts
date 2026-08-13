@@ -23,6 +23,8 @@ export interface Me {
   canManageTeam: boolean;
   /** False for accounts that only sign in with Google. */
   hasPassword: boolean;
+  /** True until the holder replaces a password an Owner chose for them. */
+  mustChangePassword: boolean;
   previewAs: { id: string; name: string; role: string; summary: string } | null;
 }
 
@@ -93,6 +95,14 @@ export const api = {
   }) => post<Snapshot>('/auth/setup', body),
   changePassword: (currentPassword: string, newPassword: string) =>
     post<Snapshot>('/auth/password', { currentPassword, newPassword }),
+  /** Checks a reset link before asking for a password. */
+  checkReset: (token: string) =>
+    get<{ valid: boolean }>(`/auth/reset?token=${encodeURIComponent(token)}`),
+  redeemReset: (token: string, newPassword: string) =>
+    post<Snapshot>('/auth/reset', { token, newPassword }),
+  /** Owner-only: issues a one-time reset link to hand to a teammate. */
+  createResetLink: (userId: string) =>
+    post<{ resetUrl: string; expiresAt: string }>(`/team/${userId}/reset-password`),
   logout: () => post<void>('/auth/logout'),
   startPreview: (teammateId: string) => post<Snapshot>('/auth/preview', { teammateId }),
   exitPreview: () => del<Snapshot>('/auth/preview'),

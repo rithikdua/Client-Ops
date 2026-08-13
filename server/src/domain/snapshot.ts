@@ -33,6 +33,7 @@ export interface Snapshot {
     canWrite: boolean;
     canManageTeam: boolean;
     hasPassword: boolean;
+    mustChangePassword: boolean;
     previewAs: { id: string; name: string; role: string; summary: string } | null;
   };
   clients: Client[];
@@ -346,6 +347,7 @@ export function buildSnapshot(db: Db, actor: Actor): Snapshot {
       canWrite: actor.canWrite,
       canManageTeam: actor.canManageTeam,
       hasPassword: actor.hasPassword,
+      mustChangePassword: actor.mustChangePassword,
       previewAs: actor.previewAsId
         ? {
             id: actor.previewAsId,

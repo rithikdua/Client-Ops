@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url';
 
 const here = dirname(fileURLToPath(import.meta.url));
 
-export const SCHEMA_VERSION = 3;
+export const SCHEMA_VERSION = 4;
 
 /** Absolute path to the SQLite file. Override with DATABASE_PATH. */
 export const DB_PATH =
@@ -48,6 +48,25 @@ export function openDb(path: string = DB_PATH): Db {
  * existing table has to be applied here too.
  */
 function migrate(db: Db, from: number): void {
+  if (from < 4) {
+    // v4: credential lifecycle — forced password change and reset links.
+    const userColumns = db.prepare('PRAGMA table_info(users)').all() as { name: string }[];
+    if (!userColumns.some((c) => c.name === 'must_change_password')) {
+      db.exec('ALTER TABLE users ADD COLUMN must_change_password INTEGER NOT NULL DEFAULT 0');
+    }
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS password_resets (
+        id         TEXT PRIMARY KEY,
+        user_id    TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        token_hash TEXT NOT NULL UNIQUE,
+        expires_at TEXT NOT NULL,
+        used_at    TEXT,
+        created_by TEXT REFERENCES users(id) ON DELETE SET NULL,
+        created_at TEXT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_password_resets_user ON password_resets(user_id);
+    `);
+  }
   if (from < 3) {
     // v3: uploads become owned records so downloads can be authorized.
     db.exec(`

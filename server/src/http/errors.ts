@@ -39,6 +39,10 @@ export function errorHandler(
     return;
   }
   if (err instanceof HttpError) {
+    const details = err.details as { retryAfter?: number } | undefined;
+    if (err.status === 429 && typeof details?.retryAfter === 'number') {
+      res.setHeader('Retry-After', String(details.retryAfter));
+    }
     res.status(err.status).json({ error: err.message, details: err.details });
     return;
   }
