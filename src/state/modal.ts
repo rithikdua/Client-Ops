@@ -16,7 +16,8 @@ export type ModalType =
   | 'completeFollowUp'
   | 'task'
   | 'taskPreview'
-  | 'changePassword';
+  | 'changePassword'
+  | 'resetLink';
 
 /**
  * Every text/select/date field across every modal. Values are held as strings
@@ -71,6 +72,9 @@ export type FormKey =
   | 'currentPassword'
   | 'newPassword'
   | 'confirmPassword'
+  | 'resetUrl'
+  | 'resetExpires'
+  | 'teammateName'
   | 'reason'
   | 'relatedClientId'
   | 'companyName'

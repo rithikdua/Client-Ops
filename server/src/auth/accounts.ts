@@ -1,3 +1,4 @@
+import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 import { ACCESS_SECTIONS } from '../../../src/data/options';
 import type { Access, Permission } from '../../../src/data/types';
 import { newId, transact, type Db } from '../db/index';
@@ -39,6 +40,11 @@ export interface NewUser {
   permission: Permission;
   password: string;
   access?: Access;
+  /**
+   * True when somebody other than the account holder chose this password, so it
+   * has to be replaced before the account can be used.
+   */
+  mustChangePassword?: boolean;
 }
 
 /**
@@ -61,8 +67,9 @@ export function createUser(db: Db, input: NewUser): string {
 
   transact(db, () => {
     db.prepare(
-      `INSERT INTO users (id, name, email, role, permission, password_hash, password_salt, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO users (id, name, email, role, permission, password_hash, password_salt,
+                          must_change_password, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     ).run(
       id,
       input.name.trim(),
@@ -71,6 +78,7 @@ export function createUser(db: Db, input: NewUser): string {
       input.permission,
       hash,
       salt,
+      input.mustChangePassword ? 1 : 0,
       new Date().toISOString(),
     );
     // Owners always hold every section; nobody can lock the administrator out.
@@ -109,16 +117,116 @@ export function changePassword(
     throw new HttpError(400, 'The new password must be different.');
   }
 
+  setPassword(db, userId, newPassword);
+}
+
+/**
+ * Writes a new password, clears any forced-change requirement, and drops the
+ * account's sessions. Signing other sessions out is the point: if the password
+ * was changed because it may have leaked, leaving those alive defeats the
+ * exercise.
+ */
+export function setPassword(db: Db, userId: string, newPassword: string): void {
   const { hash, salt } = hashPassword(newPassword);
   transact(db, () => {
-    db.prepare('UPDATE users SET password_hash = ?, password_salt = ? WHERE id = ?').run(
-      hash,
-      salt,
-      userId,
-    );
-    // Signing out other sessions is the point of a password change.
+    db.prepare(
+      `UPDATE users SET password_hash = ?, password_salt = ?, must_change_password = 0
+       WHERE id = ?`,
+    ).run(hash, salt, userId);
     db.prepare('DELETE FROM sessions WHERE user_id = ?').run(userId);
+    // Any outstanding reset link is spent the moment a password is set.
+    db.prepare('DELETE FROM password_resets WHERE user_id = ? AND used_at IS NULL').run(userId);
   });
+}
+
+/* -- password resets ------------------------------------------------------- */
+
+/** How long a reset link stays usable. */
+const RESET_TTL_MS = Number(process.env.PASSWORD_RESET_TTL_MS ?? 60 * 60_000);
+
+const hashToken = (token: string) => createHash('sha256').update(token).digest('hex');
+
+export interface ResetGrant {
+  /** The secret. Shown to the Owner once and never stored in this form. */
+  token: string;
+  expiresAt: string;
+}
+
+/**
+ * Issues a one-time reset link for someone else's account.
+ *
+ * There is no email delivery here, so the Owner passes the link on themselves.
+ * That is a deliberate trade: it removes "delete and recreate the account" as the
+ * only recovery path without inventing a mail dependency. Only the hash is
+ * stored, so the link cannot be recovered from a database dump.
+ */
+export function createPasswordReset(db: Db, userId: string, createdBy: string): ResetGrant {
+  const user = db.prepare('SELECT id FROM users WHERE id = ?').get(userId);
+  if (!user) throw new HttpError(404, 'Account not found.');
+
+  const token = randomBytes(32).toString('base64url');
+  const expiresAt = new Date(Date.now() + RESET_TTL_MS).toISOString();
+
+  transact(db, () => {
+    // Issuing a new link invalidates any earlier one.
+    db.prepare('DELETE FROM password_resets WHERE user_id = ? AND used_at IS NULL').run(userId);
+    db.prepare(
+      `INSERT INTO password_resets (id, user_id, token_hash, expires_at, used_at, created_by, created_at)
+       VALUES (?, ?, ?, ?, NULL, ?, ?)`,
+    ).run(newId(), userId, hashToken(token), expiresAt, createdBy, new Date().toISOString());
+  });
+
+  return { token, expiresAt };
+}
+
+interface ResetRow {
+  id: string;
+  user_id: string;
+  token_hash: string;
+  expires_at: string;
+  used_at: string | null;
+}
+
+function findReset(db: Db, token: string): ResetRow | null {
+  if (!token) return null;
+  const presented = hashToken(token);
+  const row = db
+    .prepare('SELECT id, user_id, token_hash, expires_at, used_at FROM password_resets WHERE token_hash = ?')
+    .get(presented) as ResetRow | undefined;
+  if (!row) return null;
+  // Belt and braces: the lookup already matched, but compare in constant time.
+  const a = Buffer.from(row.token_hash);
+  const b = Buffer.from(presented);
+  if (a.length !== b.length || !timingSafeEqual(a, b)) return null;
+  return row;
+}
+
+/** True when a link is still redeemable — used by the reset screen. */
+export function isResetTokenValid(db: Db, token: string): boolean {
+  const row = findReset(db, token);
+  return !!row && !row.used_at && new Date(row.expires_at) > new Date();
+}
+
+/** Redeems a reset link and sets the new password. */
+export function redeemPasswordReset(db: Db, token: string, newPassword: string): string {
+  const row = findReset(db, token);
+  // One message for every failure: expired, spent and never-existed are
+  // indistinguishable to whoever is holding the link.
+  const invalid = () => new HttpError(400, 'That reset link is no longer valid. Ask for a new one.');
+  if (!row || row.used_at) throw invalid();
+  if (new Date(row.expires_at) <= new Date()) throw invalid();
+  if (newPassword.length < MIN_PASSWORD_LENGTH) {
+    throw new HttpError(400, `Passwords must be at least ${MIN_PASSWORD_LENGTH} characters.`);
+  }
+
+  transact(db, () => {
+    db.prepare('UPDATE password_resets SET used_at = ? WHERE id = ?').run(
+      new Date().toISOString(),
+      row.id,
+    );
+    setPassword(db, row.user_id, newPassword);
+  });
+  return row.user_id;
 }
 
 /**

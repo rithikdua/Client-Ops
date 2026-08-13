@@ -220,11 +220,58 @@ export function TeammateForm() {
       <div>
         <TextField label="Temporary password" k="password" type="password" />
         <div className="field-hint">
-          At least 8 characters. Share it with them and have them change it after signing in.
+          At least 8 characters. Share it with them directly — they will be required to replace it
+          the first time they sign in, so you will not keep knowing their password.
         </div>
       </div>
       <div className="field-hint">
         Viewers can read everything they have access to but cannot make changes.
+      </div>
+    </>
+  );
+}
+
+/**
+ * Shows a freshly minted reset link. It is displayed once and never stored in a
+ * recoverable form, so the Owner has to copy it now.
+ */
+export function ResetLinkForm() {
+  const { form } = useModalForm();
+  const url = form.resetUrl ?? '';
+  const expires = form.resetExpires ? new Date(form.resetExpires) : null;
+  return (
+    <>
+      <div style={{ fontSize: 13, color: 'var(--ink-3)' }}>
+        Send this one-time link to <strong style={{ color: 'var(--ink-2)' }}>{form.teammateName}</strong>{' '}
+        yourself — over chat, or in person. It works once
+        {expires ? ` and expires at ${expires.toLocaleString()}` : ''}.
+      </div>
+      <div
+        style={{
+          padding: '10px 12px',
+          border: '1px solid var(--border-1)',
+          borderRadius: 8,
+          background: 'var(--surface-1)',
+          fontFamily: 'var(--font-mono)',
+          fontSize: 12,
+          wordBreak: 'break-all',
+          userSelect: 'all',
+        }}
+      >
+        {url}
+      </div>
+      <Button
+        variant="secondary"
+        size="md"
+        onClick={() => {
+          void navigator.clipboard?.writeText(url);
+        }}
+      >
+        Copy link
+      </Button>
+      <div className="field-hint">
+        This is shown once. Issuing another link cancels this one, and their current
+        password keeps working until they use it.
       </div>
     </>
   );

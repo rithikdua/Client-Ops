@@ -17,6 +17,7 @@ import {
   InvoiceForm,
   LogPaymentForm,
   PermissionsForm,
+  ResetLinkForm,
   TaskForm,
   TaskPreview,
   TeammateForm,
@@ -116,6 +117,10 @@ export function ModalHost() {
       title = 'Ticket';
       body = modal.task ? <TaskPreview task={modal.task} client={client} /> : null;
       break;
+    case 'resetLink':
+      title = 'One-time reset link';
+      body = <ResetLinkForm />;
+      break;
     case 'changePassword':
       title = state.me?.hasPassword === false ? 'Set a password' : 'Change your password';
       body = <ChangePasswordForm />;
@@ -123,6 +128,8 @@ export function ModalHost() {
   }
 
   const isPreview = modal.type === 'taskPreview';
+  // Nothing to submit: the link already exists.
+  const isInformational = modal.type === 'resetLink';
 
   return (
     <div className="modal-backdrop" onClick={actions.closeModal}>
@@ -151,7 +158,11 @@ export function ModalHost() {
               Preview as this user
             </Button>
           )}
-          {isPreview ? (
+          {isInformational ? (
+            <Button variant="primary" size="md" onClick={actions.closeModal}>
+              Done
+            </Button>
+          ) : isPreview ? (
             <>
               <Button variant="secondary" size="md" onClick={actions.closeModal}>
                 Close

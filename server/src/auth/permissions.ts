@@ -24,6 +24,8 @@ export interface Actor {
   canWrite: boolean;
   /** False for accounts that only sign in with Google. */
   hasPassword: boolean;
+  /** True until the account holder replaces a password somebody else chose. */
+  mustChangePassword: boolean;
   /** Only Owners may manage the team or start a preview. */
   canManageTeam: boolean;
 }
@@ -35,6 +37,7 @@ interface UserRow {
   role: string;
   permission: Permission;
   password_hash: string;
+  must_change_password: number;
 }
 
 export function loadAccess(db: Db, userId: string): Access {
@@ -64,7 +67,9 @@ export function writeAccess(db: Db, userId: string, access: Access): void {
 
 export function buildActor(db: Db, userId: string, previewAsId: string | null): Actor | null {
   const user = db
-    .prepare('SELECT id, name, email, role, permission, password_hash FROM users WHERE id = ?')
+    .prepare(
+      'SELECT id, name, email, role, permission, password_hash, must_change_password FROM users WHERE id = ?',
+    )
     .get(userId) as UserRow | undefined;
   if (!user) return null;
 
@@ -73,7 +78,9 @@ export function buildActor(db: Db, userId: string, previewAsId: string | null): 
   const previewed =
     isOwner && previewAsId
       ? (db
-          .prepare('SELECT id, name, email, role, permission, password_hash FROM users WHERE id = ?')
+          .prepare(
+            'SELECT id, name, email, role, permission, password_hash, must_change_password FROM users WHERE id = ?',
+          )
           .get(previewAsId) as UserRow | undefined)
       : undefined;
 
@@ -91,6 +98,7 @@ export function buildActor(db: Db, userId: string, previewAsId: string | null): 
     previewAsRole: previewed ? previewed.role : null,
     canWrite: effective.permission !== 'Viewer',
     hasPassword: user.password_hash !== '',
+    mustChangePassword: user.must_change_password === 1,
     canManageTeam: isOwner && !previewed,
   };
 }
@@ -124,6 +132,19 @@ export function requireTeamAdmin(req: Request, _res: Response, next: NextFunctio
   if (!req.actor) return next(new HttpError(401, 'Not signed in.'));
   if (!req.actor.canManageTeam) {
     return next(new HttpError(403, 'Only an account Owner can manage the team.'));
+  }
+  next();
+}
+
+/**
+ * Blocks an account that still has an administrator-chosen password from doing
+ * anything except replacing it. Enforced server-side, not just in the UI: the
+ * whole point is that somebody else currently knows these credentials.
+ */
+export function requirePasswordSettled(req: Request, _res: Response, next: NextFunction): void {
+  if (!req.actor) return next(new HttpError(401, 'Not signed in.'));
+  if (req.actor.mustChangePassword) {
+    return next(new HttpError(403, 'Set your own password before using the workspace.'));
   }
   next();
 }

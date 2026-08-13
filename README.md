@@ -40,6 +40,18 @@ closes permanently as soon as one account exists.
 Each person can change their own password from **Password** in the sidebar; doing
 so signs out their other sessions.
 
+When an Owner creates an account they choose a temporary password, so **the new
+person is required to replace it before the workspace opens** — until they do, an
+administrator knows their credentials, and the server refuses every data endpoint
+for that account rather than relying on the UI to insist.
+
+**Forgotten password?** An Owner clicks *Reset* on the Team screen, which mints a
+**one-time link** to pass on directly (chat, in person — there is no email
+delivery here, see Known gaps). The link expires in an hour, works once, is
+cancelled by issuing another, and is stored only as a hash so a database dump
+yields nothing usable. Redeeming it signs the person in and drops every other
+session on that account — including any held by whoever locked them out.
+
 ### Google sign-in (optional)
 
 Blank credentials mean the button never appears, so this is entirely opt-in.
@@ -92,7 +104,7 @@ model working. Demo data is never loaded automatically; set `SEED_DEMO_DATA=1` i
 you want the server to load it on an empty database at boot.
 
 ```bash
-npm test           # 108 server tests (node:test)
+npm test           # 119 server tests (node:test)
 npm run typecheck  # both tsconfigs
 npm run build      # typecheck + production web build
 npm start          # production API (NODE_ENV=production)
@@ -193,6 +205,15 @@ where it counts:
 - **Sessions** are opaque IDs in an HMAC-signed, `httpOnly`, `sameSite=lax`
   cookie, stored server-side so they can expire and be revoked. `SESSION_SECRET`
   is mandatory in production.
+- **A password somebody else chose must be replaced before use.** Accounts created
+  by an Owner carry `must_change_password`; while it is set, every data endpoint
+  returns 403 and only the session, sign-out and set-password routes work. This is
+  enforced server-side because the point is precisely that another person knows
+  those credentials.
+- **Password resets are one-time, hashed, expiring links** issued by an Owner.
+  Setting any password — through a reset, a forced change or the sidebar — cancels
+  outstanding reset links for that account and drops its other sessions, so
+  regaining control genuinely locks everyone else out.
 - **Passwords** are scrypt (N=2^15) with a per-user salt, compared in constant
   time. Login answers identically for a wrong password and an unknown address —
   and does the same amount of hashing either way, against a dummy hash when the
@@ -332,20 +353,24 @@ Honest list, in the order I would tackle them:
    permission redaction and the endpoints; the UI was verified with a scripted
    browser pass (below) that is not checked in, because it hard-codes this
    sandbox's Chromium path.
-4. **No password reset or email invitations.** People can change their own
-   password, but a forgotten one has to be reset by an Owner (delete and recreate
-   the account) or via the CLI — there is no email delivery wired up, so no reset
-   link and no invitation mail. An Owner sets a temporary password and passes it
-   on out of band.
-5. **No pagination.** Fine at seed scale, not at real scale.
-6. **Google sign-in has not been run against real Google credentials.** Every
+4. **No email delivery**, so reset links and invitations are handed over by the
+   Owner rather than mailed. That is a deliberate trade — it avoids inventing a
+   mail dependency — but it does mean a locked-out person has to reach an Owner
+   through some other channel. Wiring up a provider is the natural next step, and
+   `createPasswordReset` is the only place that would need to change.
+5. **No MFA.** Password accounts authenticate with a password alone. TOTP is
+   implementable without dependencies; the open questions are policy ones
+   (enforced for Owners or optional, recovery codes, lost-device handling), which
+   is why it is not bundled in here.
+6. **No pagination.** Fine at seed scale, not at real scale.
+7. **Google sign-in has not been run against real Google credentials.** Every
    step around it is tested — including signature verification, against a local
    JWKS stub signed with a generated key — but the live token exchange needs a
    Google Cloud OAuth client, which I cannot create. Expect to hit at most a
    redirect-URI mismatch on the first attempt: the error Google shows names the
    exact URI it expected, and it must equal `GOOGLE_REDIRECT_URI` character for
    character.
-7. **Optimistic UI.** Mutations wait for the round trip; on a slow link the app
+8. **Optimistic UI.** Mutations wait for the round trip; on a slow link the app
    feels it.
 
 ## Verified

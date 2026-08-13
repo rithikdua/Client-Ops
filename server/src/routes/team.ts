@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { ACCESS_SECTIONS } from '../../../src/data/options';
 import type { Access } from '../../../src/data/types';
-import { createUser } from '../auth/accounts';
+import { createPasswordReset, createUser } from '../auth/accounts';
 import { requireSection, requireTeamAdmin, writeAccess } from '../auth/permissions';
 import type { Db } from '../db/index';
 import { HttpError, notFound } from '../http/errors';
@@ -32,6 +32,9 @@ export function teamRoutes(db: Db): Router {
       role: input.role,
       permission: input.permission,
       password: input.password,
+      // An Owner chose this password, so the account holder must replace it
+      // before they can use the workspace.
+      mustChangePassword: true,
       access: input.access
         ? toAccess(input.access)
         : toAccess(Object.fromEntries(ACCESS_SECTIONS.map((s) => [s.key, true]))),
@@ -49,6 +52,26 @@ export function teamRoutes(db: Db): Router {
     const { access } = accessSchema.parse(req.body);
     writeAccess(db, userId, toAccess(access));
     res.json(snapshotFor(db, req));
+  });
+
+  /**
+   * Issues a one-time reset link for a teammate who cannot get in.
+   *
+   * The link is returned to the Owner to pass on out of band — there is no email
+   * delivery here. The alternative was leaving "delete and recreate the account"
+   * as the only recovery path, which loses the account's history.
+   */
+  router.post('/:userId/reset-password', requireSection('team'), requireTeamAdmin, (req, res) => {
+    const { userId } = req.params;
+    if (userId === req.actor!.userId) {
+      throw new HttpError(400, 'Use "Change your password" for your own account.');
+    }
+    const grant = createPasswordReset(db, userId, req.actor!.userId);
+    const base = (process.env.APP_URL ?? 'http://localhost:5173').replace(/\/+$/, '');
+    res.status(201).json({
+      resetUrl: `${base}/?reset=${encodeURIComponent(grant.token)}`,
+      expiresAt: grant.expiresAt,
+    });
   });
 
   router.delete('/:userId', requireSection('team'), requireTeamAdmin, (req, res) => {

@@ -1,6 +1,13 @@
 import { timingSafeEqual } from 'node:crypto';
 import { Router, type Request } from 'express';
-import { changePassword, claimFirstOwner, needsSetup, setupToken } from '../auth/accounts';
+import {
+  changePassword,
+  claimFirstOwner,
+  isResetTokenValid,
+  needsSetup,
+  redeemPasswordReset,
+  setupToken,
+} from '../auth/accounts';
 import {
   exchangeCode,
   googleConfig,
@@ -29,7 +36,13 @@ import type { Db } from '../db/index';
 import { buildSnapshot } from '../domain/snapshot';
 import { asyncRoute, HttpError } from '../http/errors';
 import { clientIp, IP_POLICY, LOGIN_POLICY, RateLimiter } from '../http/rateLimit';
-import { changePasswordSchema, loginSchema, previewSchema, setupSchema } from '../http/validate';
+import {
+  changePasswordSchema,
+  loginSchema,
+  previewSchema,
+  redeemResetSchema,
+  setupSchema,
+} from '../http/validate';
 
 /**
  * A real hash to compare against when the account does not exist, so login costs
@@ -190,6 +203,41 @@ export function authRoutes(db: Db): Router {
     res.cookie(SESSION_COOKIE, serializeCookie(sessionId), cookieOptions());
     const actor = buildActor(db, id, null);
     res.status(201).json(buildSnapshot(db, actor!));
+  });
+
+  /**
+   * Says whether a reset link is still usable, so the screen can show a clear
+   * "this link has expired" instead of failing after the user types a password.
+   * Deliberately returns nothing about the account it belongs to.
+   */
+  router.get('/reset', (req, res) => {
+    const token = typeof req.query.token === 'string' ? req.query.token : '';
+    res.json({ valid: isResetTokenValid(db, token) });
+  });
+
+  /** Redeems a reset link. Throttled, since the token is a secret worth guessing. */
+  router.post('/reset', (req, res) => {
+    enforceLimit(req, 'reset');
+    const input = redeemResetSchema.parse(req.body);
+
+    let userId: string;
+    try {
+      userId = redeemPasswordReset(db, input.token, input.newPassword);
+    } catch (err) {
+      // Only a bad token counts as a guess; a too-short password does not.
+      if (err instanceof HttpError && /no longer valid/.test(err.message)) {
+        recordFailure(req, 'reset');
+      }
+      throw err;
+    }
+    clearLimit(req, 'reset');
+
+    // Redeeming signs the account in, so nobody is left staring at a login form
+    // straight after choosing a password.
+    const sessionId = createSession(db, userId);
+    res.cookie(SESSION_COOKIE, serializeCookie(sessionId), cookieOptions());
+    const actor = buildActor(db, userId, null);
+    res.json(buildSnapshot(db, actor!));
   });
 
   router.post('/login', (req, res) => {
