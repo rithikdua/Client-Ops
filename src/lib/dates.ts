@@ -44,10 +44,32 @@ export function fmtDateObj(date: Date): string {
   return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
 }
 
+/**
+ * Adds whole months, clamping to the last day of the target month instead of
+ * spilling into the next one.
+ *
+ * `setMonth` alone is wrong for any date after the 28th: Jan 31 + 1 month lands
+ * on Mar 3, because February has no 31st and JavaScript rolls the overflow
+ * forward. A contract that starts on the 31st then drifts a few days further
+ * every cycle, which moved the billing window enough to count the wrong invoices
+ * in it. Business month-ends land on the 30th and 31st constantly, so this is the
+ * normal case, not an edge one.
+ */
 export function addMonths(date: Date, n: number): Date {
-  const d = new Date(date);
-  d.setMonth(d.getMonth() + n);
-  return d;
+  const year = date.getFullYear();
+  const month = date.getMonth() + n;
+  // Day 0 of the following month is the last day of the target month, and the
+  // Date constructor normalises a month index outside 0-11 for us.
+  const lastDayOfTarget = new Date(year, month + 1, 0).getDate();
+  return new Date(
+    year,
+    month,
+    Math.min(date.getDate(), lastDayOfTarget),
+    date.getHours(),
+    date.getMinutes(),
+    date.getSeconds(),
+    date.getMilliseconds(),
+  );
 }
 
 export function addDays(date: Date, n: number): Date {
@@ -80,25 +102,36 @@ export function cyclePeriodLabel(cycle: BillingCycle): string {
 }
 
 /**
- * Walks forward from the contract start date in whole cycles to find the
- * period containing TODAY. One-time contracts get a single open-ended period.
+ * The billing period containing `today`. One-time contracts get a single
+ * open-ended period.
+ *
+ * Every period is measured from the contract start date rather than from the
+ * previous period, which is what keeps a month-end contract on its month-end.
+ * Walking cycle by cycle compounds each clamp: Jan 31 → Feb 28 → Mar 28 → Apr 28
+ * loses three days by spring, where anchoring gives Feb 28, Mar 31, Apr 30 — the
+ * dates an invoice would actually carry.
  */
 export function currentBillingPeriod(
   startDateISO: string,
   cycle: BillingCycle,
+  today: Date = TODAY,
 ): { start: Date; end: Date } {
   const months = cycleMonths(cycle);
   const start0 = parseISO(startDateISO);
   if (months === 0) return { start: start0, end: addMonths(start0, 1200) };
-  let cursor = start0;
-  let next = addMonths(cursor, months);
-  let guard = 0;
-  while (next <= TODAY && guard < 500) {
-    cursor = next;
-    next = addMonths(cursor, months);
-    guard++;
-  }
-  return { start: cursor, end: next };
+
+  const monthsElapsed =
+    (today.getFullYear() - start0.getFullYear()) * 12 + (today.getMonth() - start0.getMonth());
+  // A contract that has not started yet sits in its first period.
+  let cycles = Math.max(0, Math.floor(monthsElapsed / months));
+  // Within the month, the anniversary may still be ahead of today (started on
+  // the 31st, today is the 13th), which puts us in the previous period.
+  while (cycles > 0 && addMonths(start0, months * cycles) > today) cycles -= 1;
+
+  return {
+    start: addMonths(start0, months * cycles),
+    end: addMonths(start0, months * (cycles + 1)),
+  };
 }
 
 export type InvoicePeriod =
