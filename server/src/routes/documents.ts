@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { requireSection, requireWrite } from '../auth/permissions';
 import { newId, transact, type Db } from '../db/index';
 import { logSystemActivity, todayISO } from '../domain/activity';
+import { audit } from '../domain/audit';
 import { notFound } from '../http/errors';
 import { documentSchema } from '../http/validate';
 import { assertClient, snapshotFor } from './clients';
@@ -36,10 +37,23 @@ export function documentRoutes(db: Db): Router {
   router.delete('/:documentId', requireWrite, (req, res) => {
     const { clientId, documentId } = req.params as { clientId: string; documentId: string };
     assertClient(db, clientId);
-    const result = db
-      .prepare('DELETE FROM documents WHERE id = ? AND client_id = ?')
-      .run(documentId, clientId);
-    if (result.changes === 0) throw notFound('Document');
+    const existing = db
+      .prepare('SELECT name FROM documents WHERE id = ? AND client_id = ?')
+      .get(documentId, clientId) as { name: string } | undefined;
+    if (!existing) throw notFound('Document');
+
+    transact(db, () => {
+      db.prepare('DELETE FROM documents WHERE id = ? AND client_id = ?').run(documentId, clientId);
+      logSystemActivity(db, clientId, `Document "${existing.name}" deleted`, req.actor!.name);
+      audit(db, req, {
+        action: 'document.delete',
+        targetType: 'document',
+        targetId: documentId,
+        targetLabel: existing.name,
+        detail: `client ${clientId}`,
+      });
+    });
+
     res.json(snapshotFor(db, req));
   });
 

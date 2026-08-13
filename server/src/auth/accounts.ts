@@ -21,6 +21,17 @@ export function countUsers(db: Db): number {
   return (db.prepare('SELECT COUNT(*) AS n FROM users').get() as { n: number }).n;
 }
 
+/**
+ * The address on an account, for logging. Falls back to the id so an audit entry
+ * is never silently blank for an account that has already gone.
+ */
+export function emailOf(db: Db, userId: string): string {
+  const row = db.prepare('SELECT email FROM users WHERE id = ?').get(userId) as
+    | { email: string }
+    | undefined;
+  return row?.email ?? userId;
+}
+
 /** True while the workspace has no accounts, i.e. first-run setup is available. */
 export function needsSetup(db: Db): boolean {
   return countUsers(db) === 0;

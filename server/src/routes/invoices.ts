@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { requireSection, requireWrite } from '../auth/permissions';
 import { newId, transact, type Db } from '../db/index';
 import { logSystemActivity } from '../domain/activity';
+import { audit } from '../domain/audit';
 import { balanceMinor, type PaymentLike } from '../domain/invoices';
 import { HttpError, notFound } from '../http/errors';
 import { fileSchema, invoiceSchema, paymentSchema } from '../http/validate';
@@ -12,11 +13,14 @@ interface InvoiceRow {
   id: string;
   number: string;
   amount_minor: number;
+  file_name: string | null;
 }
 
 function loadInvoice(db: Db, clientId: string, invoiceId: string): InvoiceRow {
   const row = db
-    .prepare('SELECT id, number, amount_minor FROM invoices WHERE id = ? AND client_id = ?')
+    .prepare(
+      'SELECT id, number, amount_minor, file_name FROM invoices WHERE id = ? AND client_id = ?',
+    )
     .get(invoiceId, clientId) as InvoiceRow | undefined;
   if (!row) throw notFound('Invoice');
   return row;
@@ -72,6 +76,15 @@ export function invoiceRoutes(db: Db): Router {
     transact(db, () => {
       db.prepare('DELETE FROM invoices WHERE id = ?').run(invoiceId);
       logSystemActivity(db, clientId, `Invoice ${invoice.number} deleted`, req.actor!.name);
+      // Deleting an invoice destroys its payment history with it, so the amount
+      // goes into the trail — the feed entry alone would not say what was lost.
+      audit(db, req, {
+        action: 'invoice.delete',
+        targetType: 'invoice',
+        targetId: invoiceId,
+        targetLabel: invoice.number,
+        detail: `client ${clientId}, ${invoice.amount_minor} minor units`,
+      });
     });
     res.json(snapshotFor(db, req));
   });
@@ -90,8 +103,17 @@ export function invoiceRoutes(db: Db): Router {
 
   router.delete('/:invoiceId/file', requireWrite, (req, res) => {
     const { clientId, invoiceId } = req.params as { clientId: string; invoiceId: string };
-    loadInvoice(db, clientId, invoiceId);
-    db.prepare('UPDATE invoices SET file_name = NULL, file_url = NULL WHERE id = ?').run(invoiceId);
+    const invoice = loadInvoice(db, clientId, invoiceId);
+    transact(db, () => {
+      db.prepare('UPDATE invoices SET file_name = NULL, file_url = NULL WHERE id = ?').run(invoiceId);
+      audit(db, req, {
+        action: 'invoice.file_delete',
+        targetType: 'invoice',
+        targetId: invoiceId,
+        targetLabel: invoice.number,
+        detail: invoice.file_name ? `removed ${invoice.file_name}` : 'removed attachment',
+      });
+    });
     res.json(snapshotFor(db, req));
   });
 
@@ -159,11 +181,36 @@ export function invoiceRoutes(db: Db): Router {
       invoiceId: string;
       paymentId: string;
     };
-    loadInvoice(db, clientId, invoiceId);
-    const result = db
-      .prepare('DELETE FROM payments WHERE id = ? AND invoice_id = ?')
-      .run(paymentId, invoiceId);
-    if (result.changes === 0) throw notFound('Payment');
+    const invoice = loadInvoice(db, clientId, invoiceId);
+    const payment = db
+      .prepare(
+        'SELECT bank_amount_minor, tds_minor, date FROM payments WHERE id = ? AND invoice_id = ?',
+      )
+      .get(paymentId, invoiceId) as
+      | { bank_amount_minor: number; tds_minor: number; date: string }
+      | undefined;
+    if (!payment) throw notFound('Payment');
+
+    transact(db, () => {
+      db.prepare('DELETE FROM payments WHERE id = ? AND invoice_id = ?').run(paymentId, invoiceId);
+      // Removing a payment un-settles an invoice. That is exactly the kind of
+      // change someone would want explained later, so both the feed and the
+      // trail record what was removed.
+      logSystemActivity(
+        db,
+        clientId,
+        `Payment removed from invoice ${invoice.number}`,
+        req.actor!.name,
+      );
+      audit(db, req, {
+        action: 'payment.delete',
+        targetType: 'payment',
+        targetId: paymentId,
+        targetLabel: invoice.number,
+        detail: `bank ${payment.bank_amount_minor} + TDS ${payment.tds_minor} minor units, dated ${payment.date}`,
+      });
+    });
+
     res.json(snapshotFor(db, req));
   });
 

@@ -3,6 +3,7 @@ import { Router, type Request } from 'express';
 import {
   changePassword,
   claimFirstOwner,
+  emailOf,
   isResetTokenValid,
   needsSetup,
   redeemPasswordReset,
@@ -33,6 +34,7 @@ import {
 } from '../auth/sessions';
 import { hashPassword, verifyPassword } from '../auth/passwords';
 import type { Db } from '../db/index';
+import { audit, auditAnonymous } from '../domain/audit';
 import { buildSnapshot } from '../domain/snapshot';
 import { asyncRoute, HttpError } from '../http/errors';
 import { clientIp, IP_POLICY, LOGIN_POLICY, RateLimiter } from '../http/rateLimit';
@@ -146,6 +148,7 @@ export function authRoutes(db: Db): Router {
         const { idToken } = await exchangeCode(config, code, pending.verifier);
         const profile = validateClaims(await readIdToken(idToken), config, pending.nonce);
         const userId = resolveGoogleUser(db, profile, config);
+        auditAnonymous(db, req, { action: 'auth.login_google' }, { userId, email: profile.email });
 
         const sessionId = createSession(db, userId);
         res.cookie(SESSION_COOKIE, serializeCookie(sessionId), cookieOptions());
@@ -199,6 +202,8 @@ export function authRoutes(db: Db): Router {
       password: input.password,
     });
 
+    auditAnonymous(db, req, { action: 'auth.setup' }, { userId: id, email: input.email });
+
     const sessionId = createSession(db, id);
     res.cookie(SESSION_COOKIE, serializeCookie(sessionId), cookieOptions());
     const actor = buildActor(db, id, null);
@@ -231,6 +236,7 @@ export function authRoutes(db: Db): Router {
       throw err;
     }
     clearLimit(req, 'reset');
+    auditAnonymous(db, req, { action: 'auth.reset_redeemed' }, { userId, email: emailOf(db, userId) });
 
     // Redeeming signs the account in, so nobody is left staring at a login form
     // straight after choosing a password.
@@ -260,9 +266,14 @@ export function authRoutes(db: Db): Router {
     );
     if (!user || !user.password_hash || !ok) {
       recordFailure(req, accountKey);
+      // Recorded under the address that was tried, which may belong to nobody.
+      // A run of these against one account is the signal worth having.
+      auditAnonymous(db, req, { action: 'auth.login_failed' }, { email, userId: user?.id });
       throw new HttpError(401, 'Email or password is incorrect.');
     }
     clearLimit(req, accountKey);
+
+    auditAnonymous(db, req, { action: 'auth.login' }, { email, userId: user.id });
 
     const sessionId = createSession(db, user.id);
     res.cookie(SESSION_COOKIE, serializeCookie(sessionId), cookieOptions());
@@ -273,6 +284,7 @@ export function authRoutes(db: Db): Router {
   });
 
   router.post('/logout', (req, res) => {
+    if (req.actor) audit(db, req, { action: 'auth.logout' });
     if (req.sessionId) destroySession(db, req.sessionId);
     res.clearCookie(SESSION_COOKIE, { ...cookieOptions(), maxAge: undefined });
     res.status(204).end();
@@ -302,6 +314,7 @@ export function authRoutes(db: Db): Router {
       throw err;
     }
     clearLimit(req, accountKey);
+    audit(db, req, { action: 'auth.password_change' });
 
     // Every session was just invalidated, including this one — issue a new one
     // so the person who made the change stays signed in.
@@ -319,12 +332,27 @@ export function authRoutes(db: Db): Router {
     if (!exists) throw new HttpError(404, 'Teammate not found.');
     if (teammateId === req.actor!.userId) throw new HttpError(400, 'You are already yourself.');
 
+    // Logged before the switch, so the entry is attributed to the Owner acting
+    // as themselves rather than to the account they are about to inhabit.
+    audit(db, req, {
+      action: 'auth.preview_start',
+      targetType: 'user',
+      targetId: teammateId,
+      targetLabel: emailOf(db, teammateId),
+    });
     setPreviewAs(db, req.sessionId!, teammateId);
     const actor = buildActor(db, req.actor!.userId, teammateId);
     res.json(buildSnapshot(db, actor!));
   });
 
   router.delete('/preview', requireAuth, (req, res) => {
+    if (req.actor!.previewAsId) {
+      audit(db, req, {
+        action: 'auth.preview_stop',
+        targetType: 'user',
+        targetId: req.actor!.previewAsId,
+      });
+    }
     setPreviewAs(db, req.sessionId!, null);
     const actor = buildActor(db, req.actor!.userId, null);
     res.json(buildSnapshot(db, actor!));

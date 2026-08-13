@@ -104,7 +104,7 @@ model working. Demo data is never loaded automatically; set `SEED_DEMO_DATA=1` i
 you want the server to load it on an empty database at boot.
 
 ```bash
-npm test           # 119 server tests (node:test)
+npm test           # 163 server tests (node:test)
 npm run typecheck  # both tsconfigs
 npm run build      # typecheck + production web build
 npm start          # production API (NODE_ENV=production)
@@ -112,6 +112,7 @@ npm run create-user # create an account from the terminal
 npm run db:reset   # DESTRUCTIVE: empty the database (back to first-run setup)
 npm run db:demo    # DESTRUCTIVE: empty it, then load the sample workspace
 npm run uploads:gc # delete uploaded files nothing references any more
+npm run audit      # print the audit trail (--limit, --action 'team.*', --json)
 ```
 
 ## Architecture
@@ -286,6 +287,45 @@ where it counts:
 - **Invoices cannot be overpaid.** A payment larger than the outstanding balance
   is refused, so the balance can never go negative — credits and refunds would
   need their own accounting rather than an overflowing invoice.
+- **Deletions and account administration are recorded.** Every client-scoped
+  delete now writes a `system` entry to that client's activity feed, so users see
+  what went missing and who removed it. The events a feed *cannot* hold go to an
+  append-only `audit_log`: deleting a client (the feed dies with it, so the entry
+  carries what was destroyed — invoice, contact, deliverable, document and task
+  counts), removing a payment (with the amount, since it un-settles an invoice),
+  team add/remove, every access change with its before-and-after grant, each
+  reset link issued, and sign-ins, failures, password changes and preview-as.
+  Actor identity is copied into each row and nothing in the table is a foreign
+  key: `ON DELETE SET NULL` would erase the actor exactly when the record starts
+  to matter. Read it with `npm run audit` — deliberately a terminal script rather
+  than a screen, because it exists to record what Owners did and an Owner should
+  not be the one who can read or curate it.
+- **The CSV export cannot execute.** Cells beginning `=`, `+`, `-`, `@` or `|`
+  are prefixed so Excel and Sheets show them as text instead of evaluating them —
+  quoting does not stop that, and `=HYPERLINK`/DDE payloads in an exported client
+  name would run on a colleague's machine, not ours. Plain numbers are left alone
+  so the file is still summable.
+- **Cross-site writes are refused.** Every state-changing request must come from
+  this app's own origin: `Sec-Fetch-Site` is honoured when the browser sends it,
+  and `Origin` is matched against `APP_URL`, any extra origins in `APP_ORIGINS`,
+  and the origin the request was addressed to (which is why a single-origin
+  deployment needs no configuration). This covers the shapes a `SameSite=Lax`
+  cookie does not — form posts from a sibling subdomain, and `multipart/form-data`
+  uploads, which need no CORS preflight. The cookie stays `Lax` rather than
+  `Strict` on purpose: a Strict cookie is withheld on the cross-site navigation
+  that returns from Google, which would leave a user who just signed in looking
+  signed out. A caller with neither header is not a browser and has no cross-site
+  context to forge, so it is allowed and normal authentication applies.
+- **Security headers on every response**: `nosniff`, `X-Frame-Options: DENY`,
+  `Referrer-Policy: no-referrer` (reset links travel in the address bar),
+  `Cross-Origin-Opener-Policy` and `Cross-Origin-Resource-Policy: same-origin`, a
+  closed `Permissions-Policy`, and `Cache-Control: no-store` so no shared cache
+  or back button holds another account's data. HSTS is sent only over real TLS —
+  and only trusts `X-Forwarded-Proto` when `TRUST_PROXY` says there is a proxy,
+  since a client-set header would otherwise pin a dev machine to https.
+  **No CSP yet**: almost every element in this app carries an inline `style`
+  attribute, so a policy that actually helps needs a styling refactor rather than
+  `unsafe-inline`, and that is tracked as its own change.
 - All input is validated with Zod; SQL goes through prepared statements only.
 
 ## Decisions worth knowing

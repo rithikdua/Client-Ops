@@ -251,3 +251,33 @@ CREATE TABLE IF NOT EXISTS password_resets (
 );
 
 CREATE INDEX IF NOT EXISTS idx_password_resets_user ON password_resets(user_id);
+
+-- Append-only record of things that change who can do what, or that destroy
+-- data. The per-client activity feed covers day-to-day work, but it cannot cover
+-- these: deleting a client deletes its feed along with it, and team
+-- administration belongs to no client at all.
+--
+-- Nothing here is a foreign key, deliberately. Actor identity is copied in, and
+-- ids are plain text, because every constraint available would work against the
+-- point: ON DELETE SET NULL would erase the actor from a historical record when
+-- their account is removed, CASCADE would delete the record outright, and
+-- RESTRICT would make the log block ordinary administration. A reference that
+-- disappears exactly when the row starts to matter is worse than no reference.
+CREATE TABLE IF NOT EXISTS audit_log (
+  id           TEXT PRIMARY KEY,
+  at           TEXT NOT NULL,
+  actor_id     TEXT,
+  actor_name   TEXT NOT NULL DEFAULT '',
+  actor_email  TEXT NOT NULL DEFAULT '',
+  -- Set when the actor was previewing as somebody else at the time.
+  acting_as_id TEXT,
+  action       TEXT NOT NULL,
+  target_type  TEXT NOT NULL DEFAULT '',
+  target_id    TEXT NOT NULL DEFAULT '',
+  target_label TEXT NOT NULL DEFAULT '',
+  detail       TEXT NOT NULL DEFAULT '',
+  ip           TEXT NOT NULL DEFAULT ''
+);
+
+CREATE INDEX IF NOT EXISTS idx_audit_log_at ON audit_log(at);
+CREATE INDEX IF NOT EXISTS idx_audit_log_actor ON audit_log(actor_id);

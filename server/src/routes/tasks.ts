@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { requireSection, requireWrite } from '../auth/permissions';
 import { newId, transact, type Db } from '../db/index';
 import { logSystemActivity } from '../domain/activity';
+import { audit } from '../domain/audit';
 import { notFound } from '../http/errors';
 import { taskPatchSchema, taskSchema } from '../http/validate';
 import { assertClient, snapshotFor } from './clients';
@@ -92,8 +93,23 @@ export function taskRoutes(db: Db): Router {
   router.delete('/:taskId', requireWrite, (req, res) => {
     const { clientId, taskId } = req.params as { clientId: string; taskId: string };
     assertClient(db, clientId);
-    const result = db.prepare('DELETE FROM tasks WHERE id = ? AND client_id = ?').run(taskId, clientId);
-    if (result.changes === 0) throw notFound('Task');
+    const existing = db
+      .prepare('SELECT title FROM tasks WHERE id = ? AND client_id = ?')
+      .get(taskId, clientId) as { title: string } | undefined;
+    if (!existing) throw notFound('Task');
+
+    transact(db, () => {
+      db.prepare('DELETE FROM tasks WHERE id = ? AND client_id = ?').run(taskId, clientId);
+      logSystemActivity(db, clientId, `Task "${existing.title}" deleted`, req.actor!.name);
+      audit(db, req, {
+        action: 'task.delete',
+        targetType: 'task',
+        targetId: taskId,
+        targetLabel: existing.title,
+        detail: `client ${clientId}`,
+      });
+    });
+
     res.json(snapshotFor(db, req));
   });
 

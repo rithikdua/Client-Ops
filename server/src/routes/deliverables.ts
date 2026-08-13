@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { requireSection, requireWrite } from '../auth/permissions';
 import { newId, transact, type Db } from '../db/index';
 import { logSystemActivity } from '../domain/activity';
+import { audit } from '../domain/audit';
 import { notFound } from '../http/errors';
 import { deliverablePatchSchema, deliverableSchema } from '../http/validate';
 import { assertClient, snapshotFor } from './clients';
@@ -72,10 +73,26 @@ export function deliverableRoutes(db: Db): Router {
   router.delete('/:deliverableId', requireWrite, (req, res) => {
     const { clientId, deliverableId } = req.params as { clientId: string; deliverableId: string };
     assertClient(db, clientId);
-    const result = db
-      .prepare('DELETE FROM deliverables WHERE id = ? AND client_id = ?')
-      .run(deliverableId, clientId);
-    if (result.changes === 0) throw notFound('Deliverable');
+    const existing = db
+      .prepare('SELECT title FROM deliverables WHERE id = ? AND client_id = ?')
+      .get(deliverableId, clientId) as { title: string } | undefined;
+    if (!existing) throw notFound('Deliverable');
+
+    transact(db, () => {
+      db.prepare('DELETE FROM deliverables WHERE id = ? AND client_id = ?').run(
+        deliverableId,
+        clientId,
+      );
+      logSystemActivity(db, clientId, `Deliverable "${existing.title}" deleted`, req.actor!.name);
+      audit(db, req, {
+        action: 'deliverable.delete',
+        targetType: 'deliverable',
+        targetId: deliverableId,
+        targetLabel: existing.title,
+        detail: `client ${clientId}`,
+      });
+    });
+
     res.json(snapshotFor(db, req));
   });
 
