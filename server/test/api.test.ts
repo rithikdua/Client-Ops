@@ -551,6 +551,10 @@ describe('uploads are owned, content-checked and authorized (H-03..H-05)', () =>
     // Uploaded and abandoned: must go.
     const orphan = await send('c1', owner, PNG, 'orphan.png', 'image/png');
     const orphanUrl = ((await orphan.json()) as { url: string }).url;
+    db.prepare('UPDATE uploads SET created_at = ? WHERE filename = ?').run(
+     new Date(0).toISOString(),
+     orphanUrl.split('/').pop(),
+     );
 
     // A grace period of 0 treats everything as old enough to consider.
     const { removed } = collectOrphanUploads(db, 0);
