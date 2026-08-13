@@ -2,6 +2,7 @@ import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 import { ACCESS_SECTIONS } from '../../../src/data/options';
 import type { Access, Permission } from '../../../src/data/types';
 import { newId, transact, type Db } from '../db/index';
+import { envNumber, envRaw } from '../config';
 import { HttpError } from '../http/errors';
 import { hashPassword, verifyPassword } from './passwords';
 import { writeAccess } from './permissions';
@@ -14,7 +15,7 @@ export const MIN_PASSWORD_LENGTH = 8;
  * first becomes the Owner.
  */
 export function setupToken(): string | null {
-  return process.env.SETUP_TOKEN?.trim() || null;
+  return envRaw('SETUP_TOKEN') ?? null;
 }
 
 export function countUsers(db: Db): number {
@@ -153,7 +154,9 @@ export function setPassword(db: Db, userId: string, newPassword: string): void {
 /* -- password resets ------------------------------------------------------- */
 
 /** How long a reset link stays usable. */
-const RESET_TTL_MS = Number(process.env.PASSWORD_RESET_TTL_MS ?? 60 * 60_000);
+// A minute is the floor. Blank used to mean 0, which expired every reset link at
+// the moment it was created — indistinguishable from a broken feature.
+const RESET_TTL_MS = envNumber('PASSWORD_RESET_TTL_MS', 60 * 60_000, { min: 60_000 });
 
 const hashToken = (token: string) => createHash('sha256').update(token).digest('hex');
 

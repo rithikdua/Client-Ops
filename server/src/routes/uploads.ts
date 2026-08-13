@@ -5,20 +5,22 @@ import { Router, type NextFunction, type Request, type Response } from 'express'
 import multer from 'multer';
 import type { SectionKey } from '../../../src/data/types';
 import { requireAuth, requireWrite } from '../auth/permissions';
+import { envNumber, envString } from '../config';
 import { newId, transact, type Db } from '../db/index';
 import { ALLOWED_SUMMARY, detectType } from '../domain/fileTypes';
 import { HttpError, notFound } from '../http/errors';
 
 const MB = 1024 * 1024;
 
-const MAX_UPLOAD_BYTES = Number(process.env.MAX_UPLOAD_BYTES ?? 10 * MB);
+// One megabyte is the floor: a limit small enough to reject everything is a
+// configuration mistake, and 0 was what a blank value used to produce.
+const MAX_UPLOAD_BYTES = envNumber('MAX_UPLOAD_BYTES', 10 * MB, { min: MB });
 /** Ceiling on what one account can accumulate, not just one request. */
-const MAX_BYTES_PER_USER = Number(process.env.MAX_UPLOAD_BYTES_PER_USER ?? 200 * MB);
+const MAX_BYTES_PER_USER = envNumber('MAX_UPLOAD_BYTES_PER_USER', 200 * MB, { min: MB });
 /** Ceiling for the whole workspace, so one team cannot fill the disk. */
-const MAX_BYTES_TOTAL = Number(process.env.MAX_UPLOAD_BYTES_TOTAL ?? 2048 * MB);
+const MAX_BYTES_TOTAL = envNumber('MAX_UPLOAD_BYTES_TOTAL', 2048 * MB, { min: MB });
 
-export const UPLOAD_DIR =
-  process.env.UPLOAD_DIR ?? join(process.cwd(), 'server', 'data', 'uploads');
+export const UPLOAD_DIR = envString('UPLOAD_DIR', join(process.cwd(), 'server', 'data', 'uploads'));
 
 export interface UploadRow {
   id: string;

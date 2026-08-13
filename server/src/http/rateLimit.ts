@@ -1,4 +1,5 @@
 import type { Request } from 'express';
+import { envRaw } from '../config';
 
 /**
  * Throttling for authentication endpoints.
@@ -110,7 +111,7 @@ export class RateLimiter {
  * you control is rewriting it.
  */
 export function clientIp(req: Request): string {
-  if (process.env.TRUST_PROXY) {
+  if (envRaw('TRUST_PROXY')) {
     const forwarded = req.headers['x-forwarded-for'];
     const first = Array.isArray(forwarded) ? forwarded[0] : forwarded?.split(',')[0];
     if (first?.trim()) return first.trim();
