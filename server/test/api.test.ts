@@ -939,6 +939,129 @@ describe('the snapshot withholds every denied section, not just money (C-03)', (
   });
 });
 
+describe('the client projection widens with access, and only with access', () => {
+  /** Fields that belong to the client detail screen and nowhere else. */
+  const CONFIDENTIAL = [
+    'gstin',
+    'legalName',
+    'notes',
+    'scopeOfWork',
+    'website',
+    'natureOfBusiness',
+    'cityTier',
+    'mandateType',
+    'mandateOther',
+    'paymentTerms',
+    'onboardingDate',
+  ];
+  const ROSTER = ['industry', 'health', 'owner', 'stage', 'billingCycle', 'startDate'];
+
+  async function userWith(sections: string[], label: string) {
+    const access: Record<string, boolean> = {};
+    for (const s of ['overview', 'clients', 'invoices', 'deliverables', 'documents', 'team', 'followups', 'phonebook'])
+      access[s] = sections.includes(s);
+    return createTeammateSession({ name: label, email: `${label}@phot.ai`, access });
+  }
+
+  before(async () => {
+    // The fixture ships these blank, and a test that asserts the absence of an
+    // empty string proves nothing.
+    const res = await call('PATCH', '/api/clients/c1', {
+      session: owner,
+      body: {
+        gstin: '27AABCU9603R1ZM',
+        legalName: 'Northwind Logistics Pvt Ltd',
+        notes: 'CFO unhappy about the Q3 overage; renewal at risk.',
+        scopeOfWork: 'Retainer: 40 assets/mo, 2 revisions',
+        website: 'https://northwind.example',
+        contractEndDate: '2027-02-10',
+      },
+    });
+    assert.equal(res.status, 200, 'fixture setup failed');
+  });
+
+  test('an Overview-only user gets the roster and none of the confidential record (C-01)', async () => {
+    const session = await userWith(['overview'], 'projection-overview');
+    const client = (await call('GET', '/api/auth/session', { session })).body.clients.find(
+      (c: any) => c.id === 'c1',
+    );
+
+    // The dashboard's own statistics need these.
+    for (const field of ROSTER) {
+      assert.ok(field in client, `the dashboard needs ${field}`);
+    }
+    assert.ok('contractEndDate' in client, 'renewals are counted from this');
+
+    // None of this is dashboard data, and it used to be in the payload.
+    for (const field of CONFIDENTIAL) {
+      assert.equal(field in client, false, `${field} must not reach an Overview-only user`);
+    }
+  });
+
+  test('an invoices-only user can actually see invoices (C-02)', async () => {
+    const session = await userWith(['invoices'], 'projection-invoices');
+    const body = (await call('GET', '/api/auth/session', { session })).body;
+
+    // Previously: zero clients, therefore zero invoices, on a screen the user was
+    // explicitly granted.
+    assert.ok(body.clients.length > 0, 'the invoices screen needs its rows');
+    const client = body.clients.find((c: any) => c.id === 'c1');
+    assert.ok(client.invoices.length > 0);
+    // Enough identity to label and format a row, and nothing more.
+    assert.ok(client.name);
+    assert.ok(client.currency);
+    for (const field of [...ROSTER, ...CONFIDENTIAL]) {
+      assert.equal(field in client, false, `${field} is not needed to list an invoice`);
+    }
+    assert.deepEqual(client.documents, []);
+    assert.deepEqual(client.deliverables, []);
+  });
+
+  test('a deliverables-only user can actually see deliverables (C-02)', async () => {
+    const session = await userWith(['deliverables'], 'projection-deliverables');
+    const body = (await call('GET', '/api/auth/session', { session })).body;
+    assert.ok(body.clients.length > 0);
+    assert.ok(body.clients.find((c: any) => c.id === 'c1').deliverables.length > 0);
+    assert.deepEqual(body.clients.find((c: any) => c.id === 'c1').invoices, []);
+  });
+
+  test('a documents-only user can actually see documents (C-02)', async () => {
+    const session = await userWith(['documents'], 'projection-documents');
+    const body = (await call('GET', '/api/auth/session', { session })).body;
+    assert.ok(body.clients.length > 0);
+    assert.ok(body.clients.find((c: any) => c.id === 'c1').documents.length > 0);
+  });
+
+  test('a follow-ups-only user can name the account a follow-up relates to', async () => {
+    const session = await userWith(['followups'], 'projection-followups');
+    const body = (await call('GET', '/api/auth/session', { session })).body;
+    const client = body.clients.find((c: any) => c.id === 'c1');
+    assert.ok(client, 'a follow-up row shows the related client name');
+    assert.equal('notes' in client, false);
+    assert.equal('health' in client, false);
+  });
+
+  test('a user with no client-facing section receives no clients at all', async () => {
+    const session = await userWith(['team'], 'projection-team');
+    const body = (await call('GET', '/api/auth/session', { session })).body;
+    assert.deepEqual(body.clients, []);
+  });
+
+  test('Clients access still returns the whole record', async () => {
+    const session = await userWith(['clients'], 'projection-clients');
+    const client = (await call('GET', '/api/auth/session', { session })).body.clients.find(
+      (c: any) => c.id === 'c1',
+    );
+    for (const field of [...ROSTER, ...CONFIDENTIAL]) {
+      assert.ok(field in client, `${field} belongs to the client detail screen`);
+    }
+    assert.equal(client.gstin, '27AABCU9603R1ZM');
+    assert.match(client.notes, /Q3 overage/);
+    // Money is a separate grant, and this user does not have it.
+    assert.equal('contractValue' in client, false);
+  });
+});
+
 describe('a partial money PATCH cannot corrupt a contract (C-04)', () => {
   /** A client with a known contract, created fresh so assertions are exact. */
   async function contractClient(name: string) {

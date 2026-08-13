@@ -1,6 +1,7 @@
 import { ModalHost } from './components/modal/ModalHost';
 import { PreviewBanner } from './components/PreviewBanner';
 import { Sidebar } from './components/Sidebar';
+import { NAV_ORDER } from './data/options';
 import { APP_SETTINGS } from './state/settings';
 import { useApp } from './state/AppState';
 import { ClientsView } from './views/ClientsView';
@@ -11,6 +12,7 @@ import { FollowUpsView } from './views/FollowUpsView';
 import { InvoicesView } from './views/InvoicesView';
 import { ForcePasswordView } from './views/ForcePasswordView';
 import { LoginView } from './views/LoginView';
+import { NoAccessView } from './views/NoAccessView';
 import { ResetPasswordView } from './views/ResetPasswordView';
 import { OverviewView } from './views/OverviewView';
 import { SetupView } from './views/SetupView';
@@ -46,6 +48,7 @@ export function App() {
   if (state.me?.mustChangePassword) return <ForcePasswordView />;
 
   const selectedClient = state.clients.find((c) => c.id === state.selectedId);
+  const noSections = NAV_ORDER.every((key) => !state.me?.access?.[key]);
 
   return (
     <div
@@ -83,7 +86,9 @@ export function App() {
             </span>
           </div>
         )}
-        {state.view === 'overview' && <OverviewView />}
+        {/* An account can exist with every section revoked. Say so, rather than
+            drawing a dashboard of zeros over data that was correctly withheld. */}
+        {noSections ? <NoAccessView /> : state.view === 'overview' && <OverviewView />}
         {state.view === 'clients' && <ClientsView />}
         {state.view === 'invoices' && <InvoicesView />}
         {state.view === 'deliverables' && <DeliverablesView />}

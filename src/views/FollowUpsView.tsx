@@ -21,7 +21,7 @@ export function FollowUpsView() {
   const { state, actions } = useApp();
   const { rows } = useFollowUpRows();
   const phonebook = usePhonebookRows();
-  const { canWrite } = useAccess();
+  const { canWrite, canOpenClients } = useAccess();
   const isPhonebook = state.followUpSubTab === 'phonebook';
 
   return (
@@ -128,7 +128,7 @@ export function FollowUpsView() {
                         </div>
                       )}
                     </div>
-                    {row.client ? (
+                    {row.client && canOpenClients ? (
                       <span
                         onClick={() => actions.openClient(row.client!.id)}
                         style={{ cursor: 'pointer', color: 'var(--phot-purple)' }}
@@ -250,12 +250,16 @@ export function FollowUpsView() {
                 <span style={{ fontWeight: 600 }}>{pb.name}</span>
                 <div style={{ fontSize: 12, color: 'var(--ink-3)', marginTop: 2 }}>{pb.role}</div>
               </div>
-              <span
-                onClick={() => actions.openClientTab(pb.clientId, 'contacts')}
-                style={{ cursor: 'pointer', color: 'var(--phot-purple)' }}
-              >
-                {pb.clientName}
-              </span>
+              {canOpenClients ? (
+                <span
+                  onClick={() => actions.openClientTab(pb.clientId, 'contacts')}
+                  style={{ cursor: 'pointer', color: 'var(--phot-purple)' }}
+                >
+                  {pb.clientName}
+                </span>
+              ) : (
+                <span>{pb.clientName}</span>
+              )}
               <span>
                 <a href={`mailto:${pb.email}`}>{pb.email}</a>
               </span>

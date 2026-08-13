@@ -10,7 +10,7 @@ import {
   type ReactNode,
 } from 'react';
 import { api, ApiError, type Me, type Snapshot } from '../api/client';
-import { ALL_ACCESS, DELIVERABLE_CYCLE } from '../data/options';
+import { ALL_ACCESS, DELIVERABLE_CYCLE, NAV_ORDER } from '../data/options';
 import type {
   Access,
   AttachedFile,
@@ -220,6 +220,22 @@ export interface AppActions {
 
 const AppStateContext = createContext<{ state: AppStateShape; actions: AppActions } | null>(null);
 
+/**
+ * Corrects a view the signed-in user may not open, to the first one they may.
+ *
+ * The sidebar already hides denied sections, but the *default* view was always
+ * Overview — so a teammate granted only Invoices opened on a dashboard they had
+ * no access to, and saw a screen full of zeros drawn from a payload that
+ * (correctly) withheld the data. Falling back to their first real section makes
+ * the permission set the single source of truth for navigation too.
+ */
+function permittedView(view: View, access: Access | undefined): View {
+  // The client detail screen is not a nav entry; it follows Clients access.
+  const needed: SectionKey = view === 'client' ? 'clients' : view;
+  if (access?.[needed]) return view;
+  return NAV_ORDER.find((key) => access?.[key]) ?? 'overview';
+}
+
 function fileFields(f: ModalForm) {
   return { fileName: f.fileName ?? '', fileUrl: f.fileUrl ?? '' };
 }
@@ -241,15 +257,23 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
 
   const applySnapshot = useCallback(
     (snapshot: Snapshot, extra?: Partial<AppStateShape>) => {
-      patch({
-        me: snapshot.me,
-        clients: snapshot.clients,
-        team: snapshot.team,
-        followUps: snapshot.followUps,
-        status: 'ready',
-        busy: false,
-        error: null,
-        ...extra,
+      patch((s) => {
+        const next = { ...s, ...extra };
+        return {
+          me: snapshot.me,
+          clients: snapshot.clients,
+          team: snapshot.team,
+          followUps: snapshot.followUps,
+          status: 'ready' as const,
+          busy: false,
+          error: null,
+          ...extra,
+          // Land somewhere the user can actually open. Every path arrives here —
+          // sign-in, session resume, and starting or leaving a preview — so a
+          // teammate with, say, Invoices only never opens on a dashboard they were
+          // denied, and an Owner previewing them is shown the same thing.
+          view: permittedView(next.view, snapshot.me.access),
+        };
       });
     },
     [patch],
@@ -434,8 +458,19 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
 
       goTo: (view) => patch({ view, selectedId: null }),
       goClients: () => patch({ view: 'clients' }),
-      openClient: (id) => patch({ view: 'client', selectedId: id, clientTabId: 'overview' }),
-      openClientTab: (id, tabId) => patch({ view: 'client', selectedId: id, clientTabId: tabId }),
+      // The detail screen needs Clients access. Cross-client screens link to it,
+      // and a teammate granted only Invoices would otherwise land on a client
+      // record the server had (correctly) refused to send. Guarded here, at the
+      // one place every one of those links goes through, rather than trusting
+      // each view to remember.
+      openClient: (id) => {
+        if (!stateRef.current.me?.access.clients) return;
+        patch({ view: 'client', selectedId: id, clientTabId: 'overview' });
+      },
+      openClientTab: (id, tabId) => {
+        if (!stateRef.current.me?.access.clients) return;
+        patch({ view: 'client', selectedId: id, clientTabId: tabId });
+      },
       setClientTab: (id) => patch({ clientTabId: id }),
 
       setSearch: (search) => patch({ search }),

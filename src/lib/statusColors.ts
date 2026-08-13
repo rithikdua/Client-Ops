@@ -10,11 +10,14 @@ import type {
 import type { ChipColor } from '../ds/Chip';
 import { invoiceStatus, isInvoiceOverdue } from './invoices';
 
-export function healthColor(h: Health): ChipColor {
+// Health and stage are roster fields: a user with only Invoices or Documents
+// access is not sent them, so these accept undefined and stay neutral rather than
+// forcing every caller to assert a value it may not have been given.
+export function healthColor(h: Health | undefined): ChipColor {
   return h === 'Active' ? 'green' : h === 'At Risk' ? 'amber' : 'grey';
 }
 
-export function stageColor(s: Stage): ChipColor {
+export function stageColor(s: Stage | undefined): ChipColor {
   return s === 'Onboarding' ? 'purple' : s === 'Live' ? 'green' : s === 'Renewal' ? 'amber' : 'grey';
 }
 

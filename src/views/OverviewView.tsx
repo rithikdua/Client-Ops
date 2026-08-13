@@ -37,8 +37,16 @@ export function OverviewView() {
   const weekAgo = addDays(TODAY, -7);
   const monthAgo = addDays(TODAY, -30);
   const in30 = addDays(TODAY, 30);
-  const newThisWeek = clients.filter((c) => parseISO(c.startDate) >= weekAgo).length;
-  const newThisMonth = clients.filter((c) => parseISO(c.startDate) >= monthAgo).length;
+  // Bounded at both ends: a contract starting next month has not been onboarded
+  // yet, and counting it as "new this month" overstates how much work landed.
+  const startedBetween = (from: Date) =>
+    clients.filter((c) => {
+      if (!c.startDate) return false;
+      const start = parseISO(c.startDate);
+      return start >= from && start <= TODAY;
+    }).length;
+  const newThisWeek = startedBetween(weekAgo);
+  const newThisMonth = startedBetween(monthAgo);
   const upcomingRenewals = clients.filter(
     (c) =>
       c.contractEndDate &&

@@ -4,6 +4,7 @@ import { Chip } from '../ds/Chip';
 import { fmtDate } from '../lib/dates';
 import { isDeliverableOverdue } from '../lib/invoices';
 import { deliverableStatusColor } from '../lib/statusColors';
+import { useAccess } from '../state/access';
 import { useApp, type DeliverableSortBy } from '../state/AppState';
 
 const GRID = '1.4fr 1.6fr 1fr 1fr 1.2fr';
@@ -15,6 +16,7 @@ const STATUS_ORDER: Record<DeliverableStatus, number> = {
 
 export function DeliverablesView() {
   const { state, actions } = useApp();
+  const { canOpenClients } = useAccess();
 
   const rows: { client: Client; deliverable: Deliverable; sortKey: string }[] = [];
   state.clients.forEach((c) =>
@@ -66,9 +68,9 @@ export function DeliverablesView() {
         {sorted.map(({ client, deliverable: d }) => (
           <div
             key={d.id}
-            className="table-row table-row--click"
+            className={canOpenClients ? 'table-row table-row--click' : 'table-row'}
             style={{ display: 'grid', gridTemplateColumns: GRID }}
-            onClick={() => actions.openClientTab(client.id, 'deliverables')}
+            onClick={canOpenClients ? () => actions.openClientTab(client.id, 'deliverables') : undefined}
           >
             <span style={{ fontWeight: 600 }}>{client.name}</span>
             <span>{d.title}</span>

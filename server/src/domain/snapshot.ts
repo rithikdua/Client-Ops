@@ -214,38 +214,48 @@ function loadTasks(db: Db, clientId: string): Task[] {
 /* -- assembly ------------------------------------------------------------ */
 
 /**
- * Turns a row into the client object this user is allowed to see.
+ * Sections whose screens list rows belonging to a client, and therefore need the
+ * client's identity to label them. Follow-ups is here because a follow-up row
+ * names the account it relates to.
+ */
+const CLIENT_FACING_SECTIONS = [
+  'overview',
+  'clients',
+  'invoices',
+  'deliverables',
+  'documents',
+  'followups',
+] as const;
+
+function needsClientRoster(access: Access): boolean {
+  return CLIENT_FACING_SECTIONS.some((section) => access[section]);
+}
+
+/**
+ * Turns a row into the client object this user is allowed to see, in three
+ * widening levels: identity, roster, then the full record.
  *
- * Every collection is gated, not just the money. Sending deliverables to someone
- * whose Deliverables section is denied is a server-side authorization failure
- * even if the UI never draws them — the data is already in their browser, one
- * devtools tab away. The per-endpoint `requireSection` guards are useless if the
- * snapshot hands the same rows over anyway.
+ * Two failures this replaces, both of which made the section switches a lie:
+ *
+ * Building the whole client object and letting the UI ignore fields is not
+ * authorization. An Overview-only teammate was receiving every account's GSTIN,
+ * legal name, internal notes and scope of work, one devtools tab away — while the
+ * documentation promised Overview was "a dashboard, not a master key".
+ *
+ * And gating the *container* on Clients access made the other sections useless on
+ * their own: an invoices-only teammate got an empty client list, so the Invoices
+ * screen — whose data hangs off those clients — showed "no invoices yet" while
+ * invoices existed. Each section now brings its own rows, and asks only for the
+ * client identity needed to label them.
  */
 function toClient(db: Db, row: ClientRow, access: Access): Client {
+  // Identity: what it takes to say which account a row belongs to, and to format
+  // its amounts in the right currency. Never confidential.
   const base: Client = {
     id: row.id,
     name: row.name,
-    industry: row.industry,
-    health: row.health,
-    owner: row.owner,
-    stage: row.stage,
     currency: row.currency,
-    billingCycle: row.billing_cycle,
-    startDate: row.start_date,
-    onboardingDate: orEmpty(row.onboarding_date),
-    contractEndDate: orEmpty(row.contract_end_date),
-    paymentTerms: row.payment_terms ?? 'Net 30',
-    website: orEmpty(row.website),
-    notes: orEmpty(row.notes),
-    legalName: orEmpty(row.legal_name),
-    gstin: orEmpty(row.gstin),
-    natureOfBusiness: orEmpty(row.nature_of_business),
-    cityTier: orEmpty(row.city_tier),
-    mandateType: row.mandate_type ?? 'Pilot',
-    mandateOther: orEmpty(row.mandate_other),
-    scopeOfWork: orEmpty(row.scope_of_work),
-    // Every collection below is filled in only if the section allows it.
+    // Every collection below is filled in only if its own section allows it.
     contacts: [],
     invoices: [],
     deliverables: [],
@@ -254,14 +264,37 @@ function toClient(db: Db, row: ClientRow, access: Access): Client {
     tasks: [],
   };
 
-  // Contacts, tasks and the activity feed live inside the client record, so they
-  // follow Clients access. Overview access alone is a dashboard, not a licence to
-  // read every account's detail.
+  // Roster: the dashboard's statistics and the account list. Health and stage
+  // drive the portfolio counts; the dates drive "new this month" and renewals.
+  if (access.overview || access.clients) {
+    base.industry = row.industry;
+    base.health = row.health;
+    base.owner = row.owner;
+    base.stage = row.stage;
+    base.billingCycle = row.billing_cycle;
+    base.startDate = row.start_date;
+    base.contractEndDate = orEmpty(row.contract_end_date);
+  }
+
+  // The confidential record, and the contacts, tasks and activity that live
+  // inside it. This is the client detail screen, and it needs Clients access.
   if (access.clients) {
+    base.onboardingDate = orEmpty(row.onboarding_date);
+    base.paymentTerms = row.payment_terms ?? 'Net 30';
+    base.website = orEmpty(row.website);
+    base.notes = orEmpty(row.notes);
+    base.legalName = orEmpty(row.legal_name);
+    base.gstin = orEmpty(row.gstin);
+    base.natureOfBusiness = orEmpty(row.nature_of_business);
+    base.cityTier = orEmpty(row.city_tier);
+    base.mandateType = row.mandate_type ?? 'Pilot';
+    base.mandateOther = orEmpty(row.mandate_other);
+    base.scopeOfWork = orEmpty(row.scope_of_work);
     base.contacts = loadContacts(db, row.id);
     base.tasks = loadTasks(db, row.id);
     base.activity = loadActivity(db, row.id);
   }
+
   // Money is withheld entirely from anyone without invoice access.
   if (access.invoices) {
     base.contractValue = row.contract_value_minor;
@@ -357,12 +390,12 @@ export function buildSnapshot(db: Db, actor: Actor): Snapshot {
           }
         : null,
     },
-    // The roster is needed for both the dashboard and the client list; what each
-    // row *contains* is decided by toClient() above.
-    clients:
-      actor.access.clients || actor.access.overview
-        ? clientRows.map((row) => toClient(db, row, actor.access))
-        : [],
+    // Any section that shows client-labelled rows gets the list; what each row
+    // *contains* is decided by toClient() above. Gating the container on Clients
+    // access is what made every other section unusable on its own.
+    clients: needsClientRoster(actor.access)
+      ? clientRows.map((row) => toClient(db, row, actor.access))
+      : [],
     team: actor.access.team ? loadTeam(db) : [],
     followUps: actor.access.followups ? loadFollowUps(db) : [],
   };
