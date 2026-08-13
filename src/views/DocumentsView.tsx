@@ -3,12 +3,14 @@ import type { Client, ClientDocument } from '../data/types';
 import { Chip } from '../ds/Chip';
 import { Icon } from '../ds/Icon';
 import { fmtDate } from '../lib/dates';
+import { useAccess } from '../state/access';
 import { useApp } from '../state/AppState';
 
 const GRID = '1.4fr 1.8fr 1fr 1fr';
 
 export function DocumentsView() {
   const { state, actions } = useApp();
+  const { canOpenClients } = useAccess();
 
   const rows: { client: Client; doc: ClientDocument }[] = [];
   state.clients.forEach((c) => c.documents.forEach((doc) => rows.push({ client: c, doc })));
@@ -26,9 +28,9 @@ export function DocumentsView() {
         {rows.map(({ client, doc }) => (
           <div
             key={doc.id}
-            className="table-row table-row--click"
+            className={canOpenClients ? 'table-row table-row--click' : 'table-row'}
             style={{ display: 'grid', gridTemplateColumns: GRID }}
-            onClick={() => actions.openClientTab(client.id, 'documents')}
+            onClick={canOpenClients ? () => actions.openClientTab(client.id, 'documents') : undefined}
           >
             <span style={{ fontWeight: 600 }}>{client.name}</span>
             <span style={{ display: 'flex', alignItems: 'center', gap: 8 }}>

@@ -15,6 +15,7 @@ import {
 } from '../lib/invoices';
 import { fmtMoney } from '../lib/money';
 import { invoiceStatusColor } from '../lib/statusColors';
+import { useAccess } from '../state/access';
 import { useApp, type InvoiceStatusFilter } from '../state/AppState';
 
 const GRID = '16px 1.5fr 1.1fr 0.9fr 1fr 0.9fr 1fr';
@@ -42,6 +43,7 @@ interface Row {
 
 export function InvoicesView() {
   const { state, actions } = useApp();
+  const { canOpenClients } = useAccess();
 
   // The period filter drives the finance summary; the search and status filters
   // narrow only the list below it.
@@ -206,21 +208,23 @@ export function InvoicesView() {
                 <Chevron open={expanded} />
                 <span style={{ fontWeight: 600 }}>
                   {client.name}{' '}
-                  <span
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      actions.openClientTab(client.id, 'invoices');
-                    }}
-                    style={{
-                      fontSize: 11,
-                      color: 'var(--ink-3)',
-                      fontWeight: 500,
-                      textDecoration: 'underline',
-                      marginLeft: 4,
-                    }}
-                  >
-                    open
-                  </span>
+                  {canOpenClients && (
+                    <span
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        actions.openClientTab(client.id, 'invoices');
+                      }}
+                      style={{
+                        fontSize: 11,
+                        color: 'var(--ink-3)',
+                        fontWeight: 500,
+                        textDecoration: 'underline',
+                        marginLeft: 4,
+                      }}
+                    >
+                      open
+                    </span>
+                  )}
                 </span>
                 <span style={{ fontFamily: 'var(--font-mono)' }}>{inv.number}</span>
                 <span>{fmtMoney(inv.amount, currency)}</span>

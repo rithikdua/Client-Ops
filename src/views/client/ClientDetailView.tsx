@@ -42,11 +42,21 @@ export function ClientDetailView({ client }: { client: Client }) {
   const outstanding = client.invoices.reduce((a, i) => a + invoiceBalance(i), 0);
   const openDeliverableCount = client.deliverables.filter((d) => d.status !== 'Done').length;
 
-  const period = currentBillingPeriod(client.startDate, client.billingCycle);
-  const paidThisPeriod = client.invoices
-    .filter((i) => parseISO(i.issueDate) >= period.start && parseISO(i.issueDate) < period.end)
-    .reduce((a, i) => a + invoicePaidAmount(i), 0);
-  const daysUntilNextBilling = Math.round((period.end.getTime() - TODAY.getTime()) / 86400000);
+  // This screen needs Clients access, which is also what carries the roster, so
+  // in practice both are present. The billing panel is derived from them rather
+  // than asserting them: no start date, no billing period to show.
+  const period =
+    client.startDate && client.billingCycle
+      ? currentBillingPeriod(client.startDate, client.billingCycle)
+      : null;
+  const paidThisPeriod = period
+    ? client.invoices
+        .filter((i) => parseISO(i.issueDate) >= period.start && parseISO(i.issueDate) < period.end)
+        .reduce((a, i) => a + invoicePaidAmount(i), 0)
+    : 0;
+  const daysUntilNextBilling = period
+    ? Math.round((period.end.getTime() - TODAY.getTime()) / 86400000)
+    : 0;
   const billingSoon = daysUntilNextBilling <= 7;
   const isOneTime = client.billingCycle === 'One-time';
 
@@ -142,7 +152,7 @@ export function ClientDetailView({ client }: { client: Client }) {
                 Paid {cyclePeriodLabel(client.billingCycle)}:{' '}
                 {fmtMoney(paidThisPeriod, client.currency)}
               </div>
-              {!isOneTime && (
+              {!isOneTime && period && (
                 <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 5 }}>
                   <span
                     style={{

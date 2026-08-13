@@ -12,6 +12,11 @@ import { useApp, type SortBy } from '../state/AppState';
 
 const HEALTH_ORDER: Record<Health, number> = { 'At Risk': 0, Active: 1, Churned: 2 };
 
+/** Accounts whose health this user was not sent sort last rather than first. */
+function healthRank(h: Health | undefined): number {
+  return h ? HEALTH_ORDER[h] : Object.keys(HEALTH_ORDER).length;
+}
+
 export function ClientsView() {
   const { state, actions } = useApp();
   const { showInvoiceStats, canWrite } = useAccess();
@@ -28,7 +33,9 @@ export function ClientsView() {
   const q = state.search.trim().toLowerCase();
   if (q) {
     rows = rows.filter(
-      (r) => r.client.name.toLowerCase().includes(q) || r.client.industry.toLowerCase().includes(q),
+      (r) =>
+        r.client.name.toLowerCase().includes(q) ||
+        (r.client.industry ?? '').toLowerCase().includes(q),
     );
   }
   if (state.healthFilter !== 'all') rows = rows.filter((r) => r.client.health === state.healthFilter);
@@ -36,7 +43,7 @@ export function ClientsView() {
     state.sortBy === 'value'
       ? (b.client.contractValue ?? 0) - (a.client.contractValue ?? 0)
       : state.sortBy === 'health'
-        ? HEALTH_ORDER[a.client.health] - HEALTH_ORDER[b.client.health]
+        ? healthRank(a.client.health) - healthRank(b.client.health)
         : a.client.name.localeCompare(b.client.name),
   );
 
@@ -116,10 +123,12 @@ export function ClientsView() {
               <>
                 <div>
                   {fmtMoney(client.contractValue, client.currency)}
-                  <span style={{ color: 'var(--ink-3)', fontSize: 11.5 }}>
-                    {' '}
-                    /{billingShort(client.billingCycle)}
-                  </span>
+                  {client.billingCycle && (
+                    <span style={{ color: 'var(--ink-3)', fontSize: 11.5 }}>
+                      {' '}
+                      /{billingShort(client.billingCycle)}
+                    </span>
+                  )}
                 </div>
                 <div
                   style={{

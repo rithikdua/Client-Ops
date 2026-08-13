@@ -11,6 +11,14 @@ export interface AccessInfo {
   canWrite: boolean;
   /** Only Owners may manage the team or preview as someone else. */
   canManageTeam: boolean;
+  /**
+   * Whether the client detail screen can be opened at all. The cross-client
+   * screens (Invoices, Deliverables, Documents, Follow-ups) link into it, and
+   * those links have to disappear for someone who only holds one of those
+   * sections — the action refuses anyway, and an affordance that does nothing is
+   * worse than no affordance.
+   */
+  canOpenClients: boolean;
   banner: { name: string; role: string; summary: string } | null;
   visibleClientTabs: ClientTabId[];
 }
@@ -35,6 +43,7 @@ export function useAccess(): AccessInfo {
     showInvoiceStats: !!access.invoices,
     canWrite: me ? me.canWrite : false,
     canManageTeam: me ? me.canManageTeam : false,
+    canOpenClients: !!access.clients,
     banner: me?.previewAs
       ? { name: me.previewAs.name, role: me.previewAs.role, summary: me.previewAs.summary }
       : null,

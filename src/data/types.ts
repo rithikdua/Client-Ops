@@ -120,21 +120,29 @@ export interface Task {
   attachments?: string[];
 }
 
+/**
+ * A client account, **as projected for the signed-in user**.
+ *
+ * The server sends three widening levels, and the optionality below is the
+ * contract, not laziness (see `server/src/domain/snapshot.ts`):
+ *
+ *  - *identity* — `id`, `name`, `currency` and the empty collections. Enough to
+ *    label a row. Anyone holding any client-facing section gets this, which is
+ *    what lets Invoices, Deliverables and Documents work on their own.
+ *  - *roster* — adds `industry`, `health`, `owner`, `stage`, `billingCycle`,
+ *    `startDate`, `contractEndDate`. This is the dashboard and the account list:
+ *    Overview or Clients access.
+ *  - *detail* — adds the confidential record: GSTIN, legal name, notes, scope of
+ *    work, website, payment terms. Clients access only, because that is the
+ *    screen it belongs to.
+ *
+ * Money fields are separate again and require Invoices access at every level.
+ * A field the user may not see is **absent**, never blanked or zeroed: the UI
+ * cannot be trusted to hide what the payload contains.
+ */
 export interface Client {
   id: string;
   name: string;
-  industry: string;
-  health: Health;
-  owner: string;
-  stage: Stage;
-  /**
-   * Gross contract value in minor units, derived from base + GST on save.
-   * Absent when the signed-in user has no invoice access — the server omits
-   * every money field rather than sending values the UI merely hides.
-   */
-  contractValue?: number;
-  billingCycle: BillingCycle;
-  startDate: string;
   currency: CurrencyCode;
   contacts: Contact[];
   invoices: Invoice[];
@@ -142,12 +150,26 @@ export interface Client {
   documents: ClientDocument[];
   activity: ActivityEntry[];
   tasks: Task[];
+
+  /* roster — Overview or Clients access */
+  industry?: string;
+  health?: Health;
+  owner?: string;
+  stage?: Stage;
+  billingCycle?: BillingCycle;
+  startDate?: string;
+  contractEndDate?: string;
+
+  /* money — Invoices access */
+  /** Gross contract value in minor units, derived from base + GST on save. */
+  contractValue?: number;
   baseAmount?: number;
   gstPercent?: number;
   gstAmount?: number;
   gstMode?: GstMode;
+
+  /* detail — Clients access */
   onboardingDate?: string;
-  contractEndDate?: string;
   paymentTerms?: PaymentTerms;
   website?: string;
   notes?: string;

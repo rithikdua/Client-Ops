@@ -91,7 +91,9 @@ export function cycleMonths(cycle: BillingCycle): number {
   return cycle === 'Monthly' ? 1 : cycle === 'Annual' ? 12 : cycle === 'One-time' ? 0 : 3;
 }
 
-export function cyclePeriodLabel(cycle: BillingCycle): string {
+/** Undefined when the user was not sent the roster; "to date" reads honestly. */
+export function cyclePeriodLabel(cycle: BillingCycle | undefined): string {
+  if (!cycle) return 'to date';
   return cycle === 'Monthly'
     ? 'this month'
     : cycle === 'Annual'
