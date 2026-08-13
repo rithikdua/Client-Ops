@@ -4,6 +4,7 @@ import { buildActor, requireAuth, requirePasswordSettled } from './auth/permissi
 import { getSession, parseCookie, SESSION_COOKIE } from './auth/sessions';
 import type { Db } from './db/index';
 import { errorHandler, HttpError } from './http/errors';
+import { rejectCrossSiteWrites, securityHeaders } from './http/security';
 import { activityRoutes } from './routes/activity';
 import { authRoutes } from './routes/auth';
 import { clientRoutes } from './routes/clients';
@@ -20,6 +21,10 @@ export function createApp(db: Db): Express {
   const app = express();
 
   app.disable('x-powered-by');
+  // Before the body parser and before any route: a request that should not be
+  // honoured at all is rejected without reading its body.
+  app.use(securityHeaders);
+  app.use(rejectCrossSiteWrites);
   app.use(express.json({ limit: '1mb' }));
   app.use(cookieParser());
 

@@ -286,6 +286,27 @@ where it counts:
 - **Invoices cannot be overpaid.** A payment larger than the outstanding balance
   is refused, so the balance can never go negative — credits and refunds would
   need their own accounting rather than an overflowing invoice.
+- **Cross-site writes are refused.** Every state-changing request must come from
+  this app's own origin: `Sec-Fetch-Site` is honoured when the browser sends it,
+  and `Origin` is matched against `APP_URL`, any extra origins in `APP_ORIGINS`,
+  and the origin the request was addressed to (which is why a single-origin
+  deployment needs no configuration). This covers the shapes a `SameSite=Lax`
+  cookie does not — form posts from a sibling subdomain, and `multipart/form-data`
+  uploads, which need no CORS preflight. The cookie stays `Lax` rather than
+  `Strict` on purpose: a Strict cookie is withheld on the cross-site navigation
+  that returns from Google, which would leave a user who just signed in looking
+  signed out. A caller with neither header is not a browser and has no cross-site
+  context to forge, so it is allowed and normal authentication applies.
+- **Security headers on every response**: `nosniff`, `X-Frame-Options: DENY`,
+  `Referrer-Policy: no-referrer` (reset links travel in the address bar),
+  `Cross-Origin-Opener-Policy` and `Cross-Origin-Resource-Policy: same-origin`, a
+  closed `Permissions-Policy`, and `Cache-Control: no-store` so no shared cache
+  or back button holds another account's data. HSTS is sent only over real TLS —
+  and only trusts `X-Forwarded-Proto` when `TRUST_PROXY` says there is a proxy,
+  since a client-set header would otherwise pin a dev machine to https.
+  **No CSP yet**: almost every element in this app carries an inline `style`
+  attribute, so a policy that actually helps needs a styling refactor rather than
+  `unsafe-inline`, and that is tracked as its own change.
 - All input is validated with Zod; SQL goes through prepared statements only.
 
 ## Decisions worth knowing
