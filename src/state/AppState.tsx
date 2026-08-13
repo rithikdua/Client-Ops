@@ -802,7 +802,9 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
         if (!clientId) return;
         patch({ busy: true, error: null });
         api
-          .upload(clientId, file)
+          // A task attachment lives inside the client record, so it is owned by
+          // the Clients section — which is also who may download it later.
+          .upload(clientId, file, 'clients')
           .then(({ url }) =>
             patch((s) => ({
               busy: false,
