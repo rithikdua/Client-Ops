@@ -35,16 +35,58 @@ export function minorToInput(minor: number | undefined): string {
 }
 
 /**
- * Formats a minor-unit amount. Cross-client roll-ups pass no code and fall back
- * to INR — summing mixed currencies isn't meaningful without FX rates, so those
- * totals are reported in the house currency.
+ * Formats a minor-unit amount in a stated currency.
+ *
+ * The currency is required. It used to be optional and fell back to INR, which
+ * meant every cross-client roll-up added rupees to dollars and printed the result
+ * with a ₹ in front of it — a wrong number wearing a confident label, on the
+ * screen people would use to decide things. Totals are now kept per currency
+ * (see `MoneyByCurrency`), and the compiler makes it impossible to render an
+ * amount without saying what it is denominated in.
  *
  * Sub-unit precision is dropped on display (₹15,254.24 reads as ₹15,254); the
  * stored value keeps it.
  */
-export function fmtMoney(minor: number | undefined, code?: CurrencyCode): string {
-  const c = CURRENCY_MAP[code ?? 'INR'] ?? CURRENCY_MAP.INR;
+export function fmtMoney(minor: number | undefined, code: CurrencyCode): string {
+  const c = CURRENCY_MAP[code] ?? CURRENCY_MAP.INR;
   return c.symbol + Math.round(fromMinor(minor)).toLocaleString(c.locale);
+}
+
+/**
+ * Amounts held one bucket per currency, because there is no exchange rate here
+ * and inventing one would be worse than showing two numbers. A workspace that
+ * bills in a single currency — the common case — has exactly one entry and reads
+ * exactly as it did before.
+ */
+export type MoneyByCurrency = Partial<Record<CurrencyCode, number>>;
+
+/** Adds an amount to its own currency's bucket. Never across currencies. */
+export function addMoney(
+  totals: MoneyByCurrency,
+  code: CurrencyCode,
+  minor: number,
+): MoneyByCurrency {
+  totals[code] = (totals[code] ?? 0) + minor;
+  return totals;
+}
+
+/**
+ * The buckets that have a value, in a fixed currency order so the same currency
+ * appears in the same position in every card on the screen.
+ */
+export function moneyEntries(totals: MoneyByCurrency): [CurrencyCode, number][] {
+  return (Object.keys(CURRENCY_MAP) as CurrencyCode[])
+    .filter((code) => totals[code] !== undefined)
+    .map((code) => [code, totals[code] ?? 0]);
+}
+
+/**
+ * Currency to show when there is nothing to total — an empty workspace, or a
+ * section with no rows. Preferring one that is actually in use avoids captioning
+ * a zero in a currency this workspace does not bill in.
+ */
+export function displayCurrency(totals: MoneyByCurrency, fallback: CurrencyCode = 'INR'): CurrencyCode {
+  return moneyEntries(totals)[0]?.[0] ?? fallback;
 }
 
 /**

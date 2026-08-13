@@ -104,7 +104,7 @@ model working. Demo data is never loaded automatically; set `SEED_DEMO_DATA=1` i
 you want the server to load it on an empty database at boot.
 
 ```bash
-npm test           # 173 server tests (node:test)
+npm test           # 181 server tests (node:test)
 npm run typecheck  # both tsconfigs
 npm run build      # typecheck + production web build
 npm start          # production API (NODE_ENV=production)
@@ -291,6 +291,14 @@ where it counts:
   `X-Content-Type-Options: nosniff`. Per-request, per-account and per-workspace
   size limits keep one person from filling the disk, and `npm run uploads:gc`
   removes files nothing references any more.
+- **Currencies are never mixed.** Cross-client roll-ups — outstanding balance,
+  portfolio value, the whole finance summary — keep one total per currency and
+  show them side by side. Nothing is converted, because there are no FX rates
+  here and inventing one would be worse than showing two numbers; a settlement
+  percentage is likewise computed inside a single currency. `fmtMoney` now
+  *requires* the currency, so the compiler refuses to render an amount without
+  saying what it is denominated in. A single-currency workspace reads exactly as
+  it did before.
 - **Invoices cannot be overpaid.** A payment larger than the outstanding balance
   is refused, so the balance can never go negative — credits and refunds would
   need their own accounting rather than an overflowing invoice.

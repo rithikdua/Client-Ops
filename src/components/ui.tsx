@@ -1,5 +1,7 @@
 import type { CSSProperties, ReactNode } from 'react';
+import type { CurrencyCode } from '../data/types';
 import { SearchIcon } from '../ds/Icon';
+import { fmtMoney, moneyEntries, type MoneyByCurrency } from '../lib/money';
 
 export function PageHeader({
   title,
@@ -220,7 +222,8 @@ export function Metric({
   extra,
 }: {
   label: string;
-  value: string;
+  /** A node, not a string: a cross-currency total is one line per currency. */
+  value: ReactNode;
   valueColor?: string;
   labelSize?: number;
   valueSize?: number;
@@ -244,5 +247,40 @@ export function Metric({
       </div>
       {extra}
     </div>
+  );
+}
+
+/**
+ * A cross-client total, one line per currency.
+ *
+ * Nothing here converts: a workspace billing in rupees and dollars gets two
+ * amounts, because the alternative is adding them together and labelling the
+ * result with whichever symbol came first. With a single currency — the usual
+ * case — this renders one line and looks exactly like a plain amount.
+ */
+export function MoneyTotals({
+  totals,
+  fallback = 'INR',
+  color,
+  perCurrency,
+}: {
+  totals: MoneyByCurrency;
+  /** Used only when there is nothing to total. */
+  fallback?: CurrencyCode;
+  color?: string;
+  /** Optional caption under each line, e.g. a per-currency percentage. */
+  perCurrency?: (code: CurrencyCode, minor: number) => ReactNode;
+}) {
+  const entries = moneyEntries(totals);
+  const rows: [CurrencyCode, number][] = entries.length ? entries : [[fallback, 0]];
+  return (
+    <>
+      {rows.map(([code, minor], i) => (
+        <div key={code} style={{ marginTop: i === 0 ? 0 : 2, color }}>
+          {fmtMoney(minor, code)}
+          {perCurrency?.(code, minor)}
+        </div>
+      ))}
+    </>
   );
 }
