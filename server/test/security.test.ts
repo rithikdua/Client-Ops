@@ -161,6 +161,40 @@ describe('H-08 cross-site request rejection', () => {
     }
   });
 
+  test('the development front end is accepted through the Vite proxy', async () => {
+    // The proxy rewrites Host to the API's port but forwards the browser's
+    // Origin untouched, so these two disagree by design. Getting this wrong
+    // 403s the app against itself on every developer's machine.
+    assert.equal(process.env.APP_URL, undefined, 'this test is about the unconfigured case');
+    const response = await fetch(`${base}/api/followups`, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        cookie,
+        origin: 'http://localhost:5173',
+        'sec-fetch-site': 'same-origin',
+      },
+      body: JSON.stringify({ name: 'Through the proxy', dueDate: '2026-09-01' }),
+    });
+    assert.equal(response.status, 201);
+  });
+
+  test('production does not fall back to a localhost origin', async () => {
+    const previous = process.env.NODE_ENV;
+    process.env.NODE_ENV = 'production';
+    try {
+      const response = await fetch(`${base}/api/followups`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', cookie, origin: 'http://localhost:5173' },
+        body: JSON.stringify({ name: 'Should not land', dueDate: '2026-09-01' }),
+      });
+      assert.equal(response.status, 403);
+    } finally {
+      if (previous === undefined) delete process.env.NODE_ENV;
+      else process.env.NODE_ENV = previous;
+    }
+  });
+
   test('reads are never blocked by the origin check', async () => {
     // A cross-origin read is stopped by the browser (we send no CORS headers);
     // blocking it here would break nothing but the Google sign-in redirect.

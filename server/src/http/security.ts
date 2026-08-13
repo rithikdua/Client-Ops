@@ -91,13 +91,25 @@ export function rejectCrossSiteWrites(req: Request, _res: Response, next: NextFu
  */
 function allowedOrigins(req: Request): Set<string> {
   const allowed = new Set<string>();
-  for (const value of [process.env.APP_URL, ...(process.env.APP_ORIGINS ?? '').split(',')]) {
+  for (const value of [appUrl(), ...(process.env.APP_ORIGINS ?? '').split(',')]) {
     const normalized = value ? normalizeOrigin(value.trim()) : '';
     if (normalized) allowed.add(normalized);
   }
   const host = req.get('host');
   if (host) allowed.add(`${isHttps(req) ? 'https' : 'http'}://${host}`);
   return allowed;
+}
+
+/**
+ * Where the front end is served from. In development that is Vite on :5173,
+ * which proxies /api here — the proxy rewrites Host to the API's port but passes
+ * the browser's Origin through unchanged, so the two never match on their own
+ * and the app would 403 against itself without this default. Production has to
+ * say so explicitly, because guessing a localhost origin there would be a hole.
+ */
+function appUrl(): string | undefined {
+  if (process.env.APP_URL) return process.env.APP_URL;
+  return process.env.NODE_ENV === 'production' ? undefined : 'http://localhost:5173';
 }
 
 function normalizeOrigin(value: string): string {
