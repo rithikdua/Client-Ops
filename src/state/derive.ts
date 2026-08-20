@@ -1,5 +1,5 @@
 import type { Client, FollowUp } from '../data/types';
-import { fmtDate, parseISO, TODAY } from '../lib/dates';
+import { fmtDate, parseISO, today } from '../lib/dates';
 import type { ChipColor } from '../ds/Chip';
 import { useApp } from './AppState';
 
@@ -28,7 +28,7 @@ export interface FollowUpRow {
 
 function toRow(f: FollowUp, clients: Client[]): FollowUpRow {
   const client = clients.find((c) => c.id === f.relatedClientId) ?? null;
-  const overdue = f.status !== 'Done' && parseISO(f.dueDate) < TODAY;
+  const overdue = f.status !== 'Done' && parseISO(f.dueDate) < today();
   const log = f.log ?? [];
   return {
     id: f.id,

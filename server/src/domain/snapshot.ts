@@ -14,6 +14,7 @@ import type {
 import type { Actor } from '../auth/permissions';
 import { loadAccess } from '../auth/permissions';
 import type { Db } from '../db/index';
+import { WORKSPACE_TIMEZONE } from './activity';
 
 /**
  * The whole workspace as the current actor is allowed to see it.
@@ -39,6 +40,12 @@ export interface Snapshot {
   clients: Client[];
   team: Teammate[];
   followUps: FollowUp[];
+  /**
+   * Settings that belong to the workspace rather than to the person. The
+   * timezone is here so the browser measures a calendar day exactly as the
+   * server does, instead of each side asking its own machine.
+   */
+  workspace: { timezone: string };
 }
 
 /* -- row shapes ---------------------------------------------------------- */
@@ -398,5 +405,6 @@ export function buildSnapshot(db: Db, actor: Actor): Snapshot {
       : [],
     team: actor.access.team ? loadTeam(db) : [],
     followUps: actor.access.followups ? loadFollowUps(db) : [],
+    workspace: { timezone: WORKSPACE_TIMEZONE },
   };
 }

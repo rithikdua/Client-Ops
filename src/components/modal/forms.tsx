@@ -11,7 +11,7 @@ import type { Client, CurrencyCode, Task } from '../../data/types';
 import { Button } from '../../ds/Button';
 import { Chip } from '../../ds/Chip';
 import { attachmentLabel, isImageAttachment, thumbnailStyle } from '../../lib/attachments';
-import { fmtDate, parseISO, TODAY } from '../../lib/dates';
+import { fmtDate, parseISO, today } from '../../lib/dates';
 import { CURRENCY_MAP, fmtMoney } from '../../lib/money';
 import { priorityColor, taskStatusColor } from '../../lib/statusColors';
 import { useApp } from '../../state/AppState';
@@ -508,7 +508,7 @@ export function TaskForm({ ticketKey }: { ticketKey: string }) {
 
 export function TaskPreview({ task, client }: { task: Task; client: Client | undefined }) {
   const done = task.status === 'Done';
-  const overdue = !done && !!task.dueDate && parseISO(task.dueDate) < TODAY;
+  const overdue = !done && !!task.dueDate && parseISO(task.dueDate) < today();
   const index = client ? client.tasks.findIndex((t) => t.id === task.id) : -1;
   const ticketKey = taskProjectKey(client?.name ?? '') + '-' + (index + 1);
   const attachments = task.attachments ?? [];

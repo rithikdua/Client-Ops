@@ -24,7 +24,14 @@ import type {
   Teammate,
   View,
 } from '../data/types';
-import { addDays, parseISO, toISO, todayISO, type InvoicePeriod } from '../lib/dates';
+import {
+  addDays,
+  parseISO,
+  setWorkspaceTimezone,
+  toISO,
+  todayISO,
+  type InvoicePeriod,
+} from '../lib/dates';
 import { minorToInput } from '../lib/money';
 import type { FormKey, ModalForm, ModalState } from './modal';
 
@@ -257,6 +264,9 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
 
   const applySnapshot = useCallback(
     (snapshot: Snapshot, extra?: Partial<AppStateShape>) => {
+      // Adopt the workspace's calendar before anything derived from a date is
+      // recomputed, so "today" is the same day the server would name.
+      setWorkspaceTimezone(snapshot.workspace?.timezone);
       patch((s) => {
         const next = { ...s, ...extra };
         return {

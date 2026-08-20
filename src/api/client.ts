@@ -10,6 +10,8 @@ export interface Snapshot {
   clients: Client[];
   team: Teammate[];
   followUps: FollowUp[];
+  /** Workspace-wide settings; see `setWorkspaceTimezone`. */
+  workspace?: { timezone: string };
 }
 
 export interface Me {
