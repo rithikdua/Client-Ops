@@ -4,7 +4,10 @@
    ========================================================================== */
 
 /* -- Fonts -------------------------------------------------------------- */
-@import url('https://fonts.googleapis.com/css2?family=Inter+Tight:wght@400;500;600;700;800;900&family=Inter:wght@400;500;600;700&display=swap');
+/* Self-hosted rather than fetched from fonts.googleapis.com: see fonts.css.
+   Same faces, same rendering, no third-party origin in the CSP and nothing
+   telling Google who is using this workspace. */
+@import url('./fonts.css');
 
 :root {
   /* ====== COLOR ====================================================== */

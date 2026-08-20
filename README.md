@@ -104,7 +104,7 @@ model working. Demo data is never loaded automatically; set `SEED_DEMO_DATA=1` i
 you want the server to load it on an empty database at boot.
 
 ```bash
-npm test           # 230 server tests (node:test)
+npm test           # 231 server tests (node:test)
 npm run typecheck  # both tsconfigs
 npm run build      # typecheck + production web build
 npm start          # production API (NODE_ENV=production)
@@ -291,6 +291,21 @@ where it counts:
   `X-Content-Type-Options: nosniff`. Per-request, per-account and per-workspace
   size limits keep one person from filling the disk, and `npm run uploads:gc`
   removes files nothing references any more.
+- **A Content-Security-Policy the app actually runs under.** `script-src 'self'`
+  with no inline or remote script, `object-src`/`base-uri` none,
+  `frame-ancestors 'none'`, `form-action 'self'`, and `connect-src 'self'` so
+  injected markup cannot beacon a copy of the workspace anywhere. `style-src`
+  keeps `unsafe-inline` — this app sets inline style attributes nearly
+  everywhere — and that is the only concession. Verified by driving every screen
+  with the console watched: zero violations.
+- **The front end is served by the API in production** (`SERVE_STATIC`, on
+  automatically under `NODE_ENV=production`). One origin means the policy lands
+  on the document instead of only on JSON, the session cookie needs no CORS, and
+  the repository can demonstrate a complete running system.
+- **Fonts are self-hosted.** The design system imported Inter from
+  `fonts.googleapis.com`; the same faces now ship from `/fonts`, so the policy
+  needs no third-party origin, no page load reports your users to Google, and the
+  app renders correctly on a network that cannot reach Google at all.
 - **Passwords have to survive a guess, not just a length check.** At least 12
   characters (`MIN_PASSWORD_LENGTH`), and refused if they are a common password,
   a character-substituted version of one (`P@ssw0rd` is `password`), built from

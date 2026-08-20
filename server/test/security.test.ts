@@ -45,6 +45,35 @@ describe('H-07 security headers', () => {
     assert.equal(response.headers.get('cache-control'), 'no-store');
   });
 
+  test('the content security policy blocks script, not just declares intent', async () => {
+    const csp = (await fetch(`${base}/api/health`)).headers.get('content-security-policy') ?? '';
+    const directive = (name: string) =>
+      csp
+        .split(';')
+        .map((d) => d.trim())
+        .find((d) => d.startsWith(name + ' '));
+
+    // The directive that stops injected code. Inline script must not be allowed
+    // here whatever concessions style-src needs.
+    assert.equal(directive('script-src'), "script-src 'self'");
+    assert.equal(directive('object-src'), "object-src 'none'");
+    assert.equal(directive('base-uri'), "base-uri 'none'");
+    assert.equal(directive('frame-ancestors'), "frame-ancestors 'none'");
+    assert.equal(directive('form-action'), "form-action 'self'");
+    // Nothing may be sent anywhere but back here, so injected markup cannot
+    // beacon out a copy of the workspace.
+    assert.equal(directive('connect-src'), "connect-src 'self'");
+
+    // The one compromise, and it is confined to styles: this app sets inline
+    // style attributes nearly everywhere.
+    assert.match(directive('style-src') ?? '', /'unsafe-inline'/);
+    assert.doesNotMatch(directive('script-src') ?? '', /unsafe-inline|unsafe-eval/);
+
+    // No third-party origins anywhere in the policy — the fonts are served from
+    // here, so nothing needs one.
+    assert.doesNotMatch(csp, /https?:\/\//);
+  });
+
   test('error responses are hardened too', async () => {
     const response = await fetch(`${base}/api/clients`);
     assert.equal(response.status, 401);
