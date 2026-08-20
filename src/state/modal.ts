@@ -107,6 +107,12 @@ export interface ModalState {
   taskId?: string;
   followUpId?: string;
   teammateId?: string;
+  /**
+   * Version of the record when the form was opened. Sent back on save so the
+   * server can refuse a write made from a screen someone else has since
+   * changed, instead of silently overwriting them.
+   */
+  version?: number;
   /** Attach-file modals: whether a file is already attached (enables Remove). */
   hasExistingFile?: boolean;
   /** Ticket preview modal only. */

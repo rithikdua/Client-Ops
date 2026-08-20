@@ -55,6 +55,13 @@ export const loginSchema = z.object({
   password: z.string().min(1).max(200),
 });
 
+/**
+ * The record version the client was editing. Optional: a request that omits it
+ * keeps the old last-write-wins behaviour, which is what scripts and the CLI
+ * expect. See domain/versions.ts.
+ */
+const version = z.number().int().min(0).optional();
+
 export const clientSchema = z.object({
   name: text(200).min(1, 'A client name is required.'),
   industry: text(200).default(''),
@@ -95,6 +102,7 @@ export const clientSchema = z.object({
 
 export const clientPatchSchema = clientSchema.partial().extend({
   name: text(200).min(1).optional(),
+  version,
 });
 
 export const contactSchema = z.object({
@@ -146,6 +154,7 @@ export const deliverablePatchSchema = z.object({
   status: enumOf(DELIVERABLE_STATUS_OPTIONS).optional(),
   fileName: text(300).optional(),
   fileUrl: linkUrl().optional(),
+  version,
 });
 
 export const documentSchema = z.object({
@@ -170,7 +179,7 @@ export const taskSchema = z.object({
   attachments: z.array(linkUrl()).max(20).default([]),
 });
 
-export const taskPatchSchema = taskSchema.partial();
+export const taskPatchSchema = taskSchema.partial().extend({ version });
 
 export const teammateSchema = z.object({
   name: text(200).min(1, 'A name is required.'),
@@ -192,6 +201,7 @@ export const followUpSchema = z.object({
   reason: text(2000).default(''),
   owner: text(120).default(''),
   dueDate: isoDate,
+  version,
 });
 
 export const completeFollowUpSchema = z.object({

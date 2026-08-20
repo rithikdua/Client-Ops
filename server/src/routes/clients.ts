@@ -2,6 +2,7 @@ import { Router, type Request } from 'express';
 import { requireSection, requireWrite } from '../auth/permissions';
 import { newId, transact, type Db } from '../db/index';
 import { logSystemActivity, todayISO } from '../domain/activity';
+import { bumpVersion } from '../domain/versions';
 import { audit } from '../domain/audit';
 import { buildSnapshot } from '../domain/snapshot';
 import { HttpError, notFound } from '../http/errors';
@@ -205,6 +206,8 @@ export function clientRoutes(db: Db): Router {
     if (Object.keys(columns).length === 0) throw new HttpError(400, 'Nothing to update.');
 
     transact(db, () => {
+      // First, so a stale write is refused before anything is changed.
+      bumpVersion(db, 'clients', clientId, input.version);
       const assignments = Object.keys(columns)
         .map((c) => `${c} = @${c}`)
         .join(', ');

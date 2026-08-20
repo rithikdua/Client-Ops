@@ -82,6 +82,9 @@ CREATE TABLE IF NOT EXISTS clients (
   mandate_type         TEXT,
   mandate_other        TEXT,
   scope_of_work        TEXT,
+  -- Bumped on every edit, so a stale write can be refused rather than
+  -- silently overwriting someone else's. See domain/versions.ts.
+  version              INTEGER NOT NULL DEFAULT 1,
   created_at           TEXT NOT NULL
 );
 
@@ -139,6 +142,9 @@ CREATE TABLE IF NOT EXISTS deliverables (
   status      TEXT NOT NULL CHECK (status IN ('Not started', 'In progress', 'Done')),
   file_name   TEXT,
   file_url    TEXT,
+  -- Bumped on every edit, so a stale write can be refused rather than
+  -- silently overwriting someone else's. See domain/versions.ts.
+  version              INTEGER NOT NULL DEFAULT 1,
   created_at  TEXT NOT NULL
 );
 
@@ -179,6 +185,9 @@ CREATE TABLE IF NOT EXISTS tasks (
   status      TEXT NOT NULL CHECK (status IN ('New', 'In Dev', 'Pending', 'Blocked', 'Done')),
   priority    TEXT NOT NULL CHECK (priority IN ('Highest', 'High', 'Medium', 'Low', 'Lowest')),
   due_date    TEXT NOT NULL DEFAULT '',
+  -- Bumped on every edit, so a stale write can be refused rather than
+  -- silently overwriting someone else's. See domain/versions.ts.
+  version              INTEGER NOT NULL DEFAULT 1,
   created_at  TEXT NOT NULL
 );
 
@@ -204,6 +213,9 @@ CREATE TABLE IF NOT EXISTS follow_ups (
   owner             TEXT NOT NULL DEFAULT '',
   due_date          TEXT NOT NULL,
   status            TEXT NOT NULL DEFAULT 'Pending' CHECK (status IN ('Pending', 'Done')),
+  -- Bumped on every edit, so a stale write can be refused rather than
+  -- silently overwriting someone else's. See domain/versions.ts.
+  version              INTEGER NOT NULL DEFAULT 1,
   created_at        TEXT NOT NULL
 );
 

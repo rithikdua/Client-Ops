@@ -343,6 +343,20 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
             ? ` (${err.details.map((d) => d.message).join(' ')})`
             : '';
         patch({ busy: false, error: (err instanceof Error ? err.message : 'Something went wrong.') + detail });
+        // A version conflict means this screen is showing something stale. Pull
+        // the current state in so the message and the data agree — carrying the
+        // message through, because applySnapshot clears the error banner and
+        // refreshing silently would leave the person with a form that just
+        // refused to save and no explanation.
+        if (err instanceof ApiError && err.status === 409) {
+          const conflict = err.message;
+          api
+            .session()
+            .then((snapshot) => applySnapshot(snapshot, { busy: false, error: conflict }))
+            .catch(() => {
+              /* the banner already says what happened */
+            });
+        }
       }
     },
     [applySnapshot, patch],
@@ -595,6 +609,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
           type: 'client',
           editing: true,
           clientId: client.id,
+          version: client.version,
           form: {
             name: client.name,
             industry: client.industry,
@@ -737,6 +752,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
             type: 'followup',
             editing: true,
             followUpId: f.id,
+            version: f.version,
             form: {
               name: f.name,
               companyName: f.companyName || '',
@@ -781,6 +797,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
           clientId,
           editing: true,
           taskId: task.id,
+          version: task.version,
           form: {
             title: task.title,
             assignee: task.assignee || firstTeamName(),
@@ -917,7 +934,9 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
               scopeOfWork: f.scopeOfWork ?? '',
             };
             if (modal.editing) {
-              void run(() => api.updateClient(modal.clientId!, body), { onSuccess: closed });
+              void run(() => api.updateClient(modal.clientId!, { ...body, version: modal.version }), {
+                onSuccess: closed,
+              });
             } else {
               if (f.contactName) {
                 body.contact = {
@@ -1059,7 +1078,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
             void run(
               () =>
                 modal.editing
-                  ? api.updateTask(modal.clientId!, modal.taskId!, body)
+                  ? api.updateTask(modal.clientId!, modal.taskId!, { ...body, version: modal.version })
                   : api.addTask(modal.clientId!, body, intentKey()),
               { onSuccess: closed },
             );
@@ -1100,7 +1119,10 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
               dueDate: f.dueDate || todayISO(),
             };
             void run(
-              () => (modal.editing ? api.updateFollowUp(modal.followUpId!, body) : api.addFollowUp(body, intentKey())),
+              () =>
+                modal.editing
+                  ? api.updateFollowUp(modal.followUpId!, { ...body, version: modal.version })
+                  : api.addFollowUp(body, intentKey()),
               { onSuccess: closed },
             );
             return;

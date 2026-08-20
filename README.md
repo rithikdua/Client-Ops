@@ -104,7 +104,7 @@ model working. Demo data is never loaded automatically; set `SEED_DEMO_DATA=1` i
 you want the server to load it on an empty database at boot.
 
 ```bash
-npm test           # 204 server tests (node:test)
+npm test           # 211 server tests (node:test)
 npm run typecheck  # both tsconfigs
 npm run build      # typecheck + production web build
 npm start          # production API (NODE_ENV=production)
@@ -291,6 +291,12 @@ where it counts:
   `X-Content-Type-Options: nosniff`. Per-request, per-account and per-workspace
   size limits keep one person from filling the disk, and `npm run uploads:gc`
   removes files nothing references any more.
+- **A stale edit is refused, not silently applied.** Clients, tasks, deliverables
+  and follow-ups carry a version; a save sends the version the form was opened
+  with, and the server applies it only if that is still current. Otherwise the
+  writer is told, their form stays open with their text intact, and the screen
+  behind refreshes to show what actually changed. Requests that send no version
+  keep the old behaviour, so scripts are unaffected.
 - **One intent, one record.** Every create accepts an `Idempotency-Key`
   identifying what the user is trying to do; a second request carrying a key
   already seen is answered with the current state instead of inserting again.
