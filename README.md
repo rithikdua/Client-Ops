@@ -113,7 +113,40 @@ npm run db:reset   # DESTRUCTIVE: empty the database (back to first-run setup)
 npm run db:demo    # DESTRUCTIVE: empty it, then load the sample workspace
 npm run uploads:gc # delete uploaded files nothing references any more
 npm run audit      # print the audit trail (--limit, --action 'team.*', --json)
+npm run backup     # verified snapshot of the database (--list to see them)
+npm run restore    # put one back:  npm run restore -- --latest
+npm run maintenance # one pass: backup, verify, prune, sweep orphans
 ```
+
+## Deployment
+
+**One instance.** Not a limitation to work around later — a property of three
+deliberate choices, and the app now says so at startup if it finds a second
+process on the same data directory:
+
+| What | Where it lives | What two instances would mean |
+|---|---|---|
+| Database | one SQLite file on local disk | two separate workspaces |
+| Uploads | local filesystem | a file exists on whichever machine received it |
+| Rate limits | process memory | N times as many login attempts allowed as configured |
+
+None of that fails loudly. It quietly stops being true, which is worse. Scaling
+horizontally means replacing all three — Postgres, object storage, and a shared
+counter — not adding a second container.
+
+For a workspace of this size that trade is worth taking: one file to back up,
+no network hop per query, and a restore that is a file copy. The ceiling is real
+and it is documented in **Known gaps** below.
+
+```
+npm run build                      # build the front end
+NODE_ENV=production npm start      # serves the API *and* the app on one port
+```
+
+Behind a TLS terminator, set `TRUST_PROXY=1` so client addresses come from
+`X-Forwarded-For`, and `APP_URL` to the address people actually open. Point the
+health check at `/api/health/ready`, not `/api/health/live` — the first says
+whether it can serve, the second only that the process exists.
 
 ## Architecture
 
@@ -291,6 +324,13 @@ where it counts:
   `X-Content-Type-Options: nosniff`. Per-request, per-account and per-workspace
   size limits keep one person from filling the disk, and `npm run uploads:gc`
   removes files nothing references any more.
+- **Uploads stream to disk, and are bounded.** They used to be buffered whole in
+  memory before any validation, so exposure was the size limit times however many
+  people uploaded at once. Files now stream to a temporary name, only the first
+  8 KB is read to identify the format, and at most `MAX_CONCURRENT_UPLOADS` (4)
+  run at a time — the rest get a 503 with `Retry-After`. Measured: eight
+  concurrent 9 MB uploads produce **no heap growth**, where buffering them would
+  have been 72 MB.
 - **Backups run themselves, and the restore path is real.** The server takes a
   snapshot on start and daily after that, using `VACUUM INTO` so it is consistent
   while the server keeps serving — copying the file would miss whatever is still
