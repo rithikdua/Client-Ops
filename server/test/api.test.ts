@@ -15,7 +15,7 @@ const { seedDemoWorkspace } = await import('../src/db/seed');
 const { HttpError: HttpErrorClass } = await import('../src/http/errors');
 
 const db = openDb(':memory:');
-seedDemoWorkspace(db, { password: 'demo1234' });
+seedDemoWorkspace(db, { password: 'demo-pass-2026!' });
 const server = createApp(db).listen(0);
 const port = (server.address() as AddressInfo).port;
 const base = `http://127.0.0.1:${port}`;
@@ -41,7 +41,7 @@ async function call(
   return { status: response.status, body: text ? JSON.parse(text) : null };
 }
 
-async function signIn(email: string, password = 'demo1234'): Promise<Session> {
+async function signIn(email: string, password = 'demo-pass-2026!'): Promise<Session> {
   const response = await fetch(`${base}/api/auth/login`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
@@ -63,8 +63,8 @@ let viewer: Session;
  */
 async function createTeammateSession(
   body: Record<string, unknown>,
-  temporary = 'password-1234',
-  chosen = 'chosen-password-9',
+  temporary = 'chosen-phrase-1234',
+  chosen = 'chosen-phrase-99',
 ): Promise<Session> {
   const created = await call('POST', '/api/team', {
     session: owner,
@@ -205,7 +205,7 @@ describe('team administration', () => {
       (
         await call('POST', '/api/team', {
           session: noInvoices,
-          body: { name: 'X', email: 'x@phot.ai', password: 'password123' },
+          body: { name: 'X', email: 'x@phot.ai', password: 'chosen-phrase-9x' },
         })
       ).status,
       403,
@@ -250,7 +250,7 @@ describe('team administration', () => {
   test('duplicate email addresses are rejected', async () => {
     const res = await call('POST', '/api/team', {
       session: owner,
-      body: { name: 'Copy', email: 'ravi@phot.ai', password: 'password123' },
+      body: { name: 'Copy', email: 'ravi@phot.ai', password: 'chosen-phrase-9x' },
     });
     assert.equal(res.status, 409);
   });
@@ -843,19 +843,19 @@ describe('first-run setup is not a land-grab (C-02)', () => {
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify(body),
     });
-  const OWNER = { name: 'First', email: 'first@example.com', password: 'a-real-password' };
+  const OWNER = { name: 'First', email: 'first@example.com', password: 'a-real-passphrase' };
 
   test('the emptiness check and the insert are atomic', async () => {
     const { fresh, srv } = freshApp();
     try {
       const { claimFirstOwner } = await import('../src/auth/accounts');
-      claimFirstOwner(fresh, { name: 'A', email: 'a@example.com', password: 'password-123' });
+      claimFirstOwner(fresh, { name: 'A', email: 'a@example.com', password: 'chosen-phrase-123' });
 
       // A second claim must lose, whatever the timing. (better-sqlite3 is
       // synchronous, so two HTTP requests cannot genuinely interleave here; this
       // asserts the contract the transaction provides.)
       assert.throws(
-        () => claimFirstOwner(fresh, { name: 'B', email: 'b@example.com', password: 'password-123' }),
+        () => claimFirstOwner(fresh, { name: 'B', email: 'b@example.com', password: 'chosen-phrase-123' }),
         (err: unknown) => err instanceof HttpErrorClass && err.status === 409,
       );
       assert.equal((fresh.prepare('SELECT COUNT(*) AS n FROM users').get() as any).n, 1);
@@ -926,10 +926,10 @@ describe('first-run setup is not a land-grab (C-02)', () => {
 describe('login does not leak which addresses exist (H-02)', () => {
   test('an unknown address and a wrong password are indistinguishable', async () => {
     const unknown = await call('POST', '/api/auth/login', {
-      body: { email: 'nobody-at-all@example.com', password: 'whatever-123' },
+      body: { email: 'nobody-at-all@example.com', password: 'arbitrary-phrase-1' },
     });
     const known = await call('POST', '/api/auth/login', {
-      body: { email: 'priya@phot.ai', password: 'wrong-password' },
+      body: { email: 'priya@phot.ai', password: 'wrong-credential' },
     });
     assert.equal(unknown.status, known.status);
     assert.deepEqual(unknown.body, known.body);
@@ -942,7 +942,7 @@ describe('login does not leak which addresses exist (H-02)', () => {
        VALUES ('google-only', 'Google Only', 'google-only@phot.ai', '', 'Editor', '', '', 'sub-x', ?)`,
     ).run(new Date().toISOString());
 
-    for (const password of ['', ' ', 'anything', 'demo1234']) {
+    for (const password of ['', ' ', 'anything', 'demo-pass-2026!']) {
       const res = await call('POST', '/api/auth/login', {
         body: { email: 'google-only@phot.ai', password: password || 'x' },
       });
@@ -1378,12 +1378,12 @@ describe('an Owner-set password must be replaced before use (H-09)', () => {
     // Setting their own password clears it, in the same response.
     const settled = await call('POST', '/api/auth/password', {
       session,
-      body: { currentPassword: 'owner-chose-this', newPassword: 'my-own-password' },
+      body: { currentPassword: 'owner-chose-this', newPassword: 'my-own-phrase-11' },
     });
     assert.equal(settled.status, 200);
     assert.equal(settled.body.me.mustChangePassword, false);
 
-    const after = await signIn('temp-password@phot.ai', 'my-own-password');
+    const after = await signIn('temp-password@phot.ai', 'my-own-phrase-11');
     assert.equal((await call('GET', '/api/clients', { session: after })).status, 200);
   });
 
@@ -1433,7 +1433,7 @@ describe('password reset links (M-10)', () => {
     assert.equal(check.body.valid, true);
 
     const redeemed = await call('POST', '/api/auth/reset', {
-      body: { token, newPassword: 'a-brand-new-password' },
+      body: { token, newPassword: 'a-brand-new-phrase' },
     });
     assert.equal(redeemed.status, 200);
     assert.equal(redeemed.body.me.email, email);
@@ -1441,9 +1441,9 @@ describe('password reset links (M-10)', () => {
     assert.equal(redeemed.body.me.mustChangePassword, false);
 
     // The new password works; the old one does not.
-    await signIn(email, 'a-brand-new-password');
+    await signIn(email, 'a-brand-new-phrase');
     assert.equal(
-      (await call('POST', '/api/auth/login', { body: { email, password: 'chosen-password-9' } })).status,
+      (await call('POST', '/api/auth/login', { body: { email, password: 'chosen-phrase-99' } })).status,
       401,
     );
   });
@@ -1490,7 +1490,7 @@ describe('password reset links (M-10)', () => {
 
   test('a made-up token is refused, and says nothing about why', async () => {
     const invented = await call('POST', '/api/auth/reset', {
-      body: { token: 'not-a-real-token-at-all', newPassword: 'whatever-123' },
+      body: { token: 'not-a-real-token-at-all', newPassword: 'arbitrary-phrase-1' },
     });
     assert.equal(invented.status, 400);
     assert.match(invented.body.error, /no longer valid/);
@@ -1514,12 +1514,12 @@ describe('password reset links (M-10)', () => {
 
   test('redeeming invalidates the account’s other sessions', async () => {
     const { userId, email } = await teammateNeedingReset('sessions');
-    const stale = await signIn(email, 'chosen-password-9');
+    const stale = await signIn(email, 'chosen-phrase-99');
     assert.equal((await call('GET', '/api/clients', { session: stale })).status, 200);
 
     const issued = await call('POST', `/api/team/${userId}/reset-password`, { session: owner });
     const token = new URL(issued.body.resetUrl).searchParams.get('reset') ?? '';
-    await call('POST', '/api/auth/reset', { body: { token, newPassword: 'rotated-password-9' } });
+    await call('POST', '/api/auth/reset', { body: { token, newPassword: 'rotated-phrase-99' } });
 
     assert.equal(
       (await call('GET', '/api/clients', { session: stale })).status,
@@ -1549,7 +1549,7 @@ describe('brute force is throttled (H-01)', () => {
     const email = 'throttle-target@phot.ai';
     const created = await call('POST', '/api/team', {
       session: owner,
-      body: { name: 'Throttle', email, permission: 'Viewer', password: 'password-1234' },
+      body: { name: 'Throttle', email, permission: 'Viewer', password: 'chosen-phrase-1234' },
     });
     assert.equal(created.status, 201);
 
@@ -1575,7 +1575,7 @@ describe('brute force is throttled (H-01)', () => {
     // The correct password is refused too while the block holds — that is the
     // point, and it is why the block is time-limited rather than permanent.
     const evenWithTheRightPassword = await call('POST', '/api/auth/login', {
-      body: { email, password: 'password-1234' },
+      body: { email, password: 'chosen-phrase-1234' },
     });
     assert.equal(evenWithTheRightPassword.status, 429);
   });
@@ -1599,15 +1599,15 @@ describe('brute force is throttled (H-01)', () => {
     const email = 'throttle-pw@phot.ai';
     await call('POST', '/api/team', {
       session: owner,
-      body: { name: 'PwThrottle', email, permission: 'Editor', password: 'password-1234' },
+      body: { name: 'PwThrottle', email, permission: 'Editor', password: 'chosen-phrase-1234' },
     });
-    const session = await signIn(email, 'password-1234');
+    const session = await signIn(email, 'chosen-phrase-1234');
 
     let sawTooMany = false;
     for (let i = 0; i < 12; i++) {
       const res = await call('POST', '/api/auth/password', {
         session,
-        body: { currentPassword: `wrong-${i}`, newPassword: 'a-new-password' },
+        body: { currentPassword: `wrong-${i}`, newPassword: 'a-newly-chosen-1' },
       });
       if (res.status === 429) {
         sawTooMany = true;

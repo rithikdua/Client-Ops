@@ -26,7 +26,7 @@ const server = app.listen(PORT, () => {
   } else if (WANT_DEMO_DATA) {
     console.log(
       `[client-ops] demo workspace loaded — sign in as priya@phot.ai with the password "${
-        envString('SEED_PASSWORD', 'demo1234')
+        envString('SEED_PASSWORD', 'demo-pass-2026!')
       }"`,
     );
   }

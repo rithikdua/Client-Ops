@@ -10,7 +10,7 @@ import { TEAM_SEED, seedClients, seedFollowUps } from './seedData';
  * Password given to every demo account. Development convenience only — seeding
  * refuses to run in production unless SEED_PASSWORD is set explicitly.
  */
-const DEFAULT_SEED_PASSWORD = 'demo1234';
+const DEFAULT_SEED_PASSWORD = 'demo-pass-2026!';
 
 export function isSeeded(db: Db): boolean {
   return countUsers(db) > 0;

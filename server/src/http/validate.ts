@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { MIN_PASSWORD_LENGTH } from '../auth/passwordPolicy';
 import {
   BILLING_OPTIONS,
   DELIVERABLE_STATUS_OPTIONS,
@@ -235,7 +236,7 @@ export const teammateSchema = z.object({
   email: z.string().trim().toLowerCase().email(),
   role: text(200).default(''),
   permission: enumOf(PERMISSION_OPTIONS).default('Editor'),
-  password: z.string().min(8, 'Use at least 8 characters.').max(200),
+  password: z.string().min(MIN_PASSWORD_LENGTH, `Use at least ${MIN_PASSWORD_LENGTH} characters.`).max(200),
   access: z.record(z.boolean()).optional(),
 });
 
@@ -266,19 +267,19 @@ export const setupSchema = z.object({
   name: text(200).min(1, 'Your name is required.'),
   email: z.string().trim().toLowerCase().email(),
   role: text(200).default(''),
-  password: z.string().min(8, 'Use at least 8 characters.').max(200),
+  password: z.string().min(MIN_PASSWORD_LENGTH, `Use at least ${MIN_PASSWORD_LENGTH} characters.`).max(200),
   /** Required when the server sets SETUP_TOKEN. */
   setupToken: z.string().max(200).default(''),
 });
 
 export const redeemResetSchema = z.object({
   token: z.string().min(1, 'A reset link is required.').max(500),
-  newPassword: z.string().min(8, 'Use at least 8 characters.').max(200),
+  newPassword: z.string().min(MIN_PASSWORD_LENGTH, `Use at least ${MIN_PASSWORD_LENGTH} characters.`).max(200),
 });
 
 export const changePasswordSchema = z.object({
   // Empty is allowed only for a Google-only account that has no password yet;
   // the server checks which case applies.
   currentPassword: z.string().max(200).default(''),
-  newPassword: z.string().min(8, 'Use at least 8 characters.').max(200),
+  newPassword: z.string().min(MIN_PASSWORD_LENGTH, `Use at least ${MIN_PASSWORD_LENGTH} characters.`).max(200),
 });

@@ -147,7 +147,7 @@ describe('who a Google identity is allowed to be', () => {
       name: email,
       email,
       permission,
-      password: 'password-1234',
+      password: 'chosen-phrase-1234',
       access: { ...ALL_ACCESS },
     });
 

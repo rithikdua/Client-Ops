@@ -211,6 +211,7 @@ export function CompleteFollowUpForm() {
 }
 
 export function TeammateForm() {
+  const { state } = useApp();
   return (
     <>
       <TextField label="Name" k="name" />
@@ -220,7 +221,8 @@ export function TeammateForm() {
       <div>
         <TextField label="Temporary password" k="password" type="password" />
         <div className="field-hint">
-          At least 8 characters. Share it with them directly — they will be required to replace it
+          At least {state.minPasswordLength} characters, and not a common or guessable one. Share it
+          with them directly — they will be required to replace it
           the first time they sign in, so you will not keep knowing their password.
         </div>
       </div>
@@ -292,7 +294,8 @@ export function ChangePasswordForm() {
       <TextField label={hasPassword ? 'New password' : 'Password'} k="newPassword" type="password" />
       <TextField label="Confirm password" k="confirmPassword" type="password" />
       <div className="field-hint">
-        At least 8 characters{hasPassword ? ', and different from your current one.' : '.'}
+        At least {state.minPasswordLength} characters, not a common or guessable one
+        {hasPassword ? ', and different from your current one.' : '.'}
       </div>
     </>
   );

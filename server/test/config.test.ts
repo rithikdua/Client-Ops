@@ -93,7 +93,7 @@ describe('H-05 configuration is validated, and blank means unset', () => {
       email: 'config-check@phot.ai',
       role: '',
       permission: 'Owner',
-      password: 'password-123',
+      password: 'chosen-phrase-123',
     });
     const grant = createPasswordReset(db, id, id);
     const lifetimeMs = new Date(grant.expiresAt).getTime() - Date.now();

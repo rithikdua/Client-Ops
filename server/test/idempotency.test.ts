@@ -14,7 +14,7 @@ const { seedDemoWorkspace } = await import('../src/db/seed');
 const { collectIdempotencyKeys } = await import('../src/http/idempotency');
 
 const db = openDb(':memory:');
-seedDemoWorkspace(db, { password: 'demo1234' });
+seedDemoWorkspace(db, { password: 'demo-pass-2026!' });
 const server = createApp(db).listen(0);
 const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
 
@@ -52,7 +52,7 @@ before(async () => {
   const login = await fetch(`${base}/api/auth/login`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ email: 'priya@phot.ai', password: 'demo1234' }),
+    body: JSON.stringify({ email: 'priya@phot.ai', password: 'demo-pass-2026!' }),
   });
   owner = (login.headers.getSetCookie?.()[0] ?? '').split(';')[0];
 

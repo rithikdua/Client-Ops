@@ -13,7 +13,7 @@ const { seedDemoWorkspace } = await import('../src/db/seed');
 const { readAudit, recordAudit } = await import('../src/domain/audit');
 
 const db = openDb(':memory:');
-seedDemoWorkspace(db, { password: 'demo1234' });
+seedDemoWorkspace(db, { password: 'demo-pass-2026!' });
 const server = createApp(db).listen(0);
 const port = (server.address() as AddressInfo).port;
 const base = `http://127.0.0.1:${port}`;
@@ -35,7 +35,7 @@ async function call(
   return { status: response.status, body: text ? JSON.parse(text) : null };
 }
 
-async function signIn(email: string, password = 'demo1234'): Promise<string> {
+async function signIn(email: string, password = 'demo-pass-2026!'): Promise<string> {
   const response = await fetch(`${base}/api/auth/login`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
@@ -174,7 +174,7 @@ describe('H-12 audit trail', () => {
         email: 'audited@phot.ai',
         role: 'Analyst',
         permission: 'Editor',
-        password: 'temporary-123',
+        password: 'assigned-phrase-1',
         access: { overview: true, clients: true, invoices: true, deliverables: false, documents: false, followups: false, team: false },
       },
     });
@@ -217,13 +217,13 @@ describe('H-12 audit trail', () => {
         email: 'second.owner@phot.ai',
         role: 'Owner',
         permission: 'Owner',
-        password: 'temporary-123',
+        password: 'assigned-phrase-1',
       },
     });
     const second = created.body.team.find((t: any) => t.name === 'Second Owner');
 
     // They act — recorded under their own id — and are then removed.
-    await signIn('second.owner@phot.ai', 'temporary-123');
+    await signIn('second.owner@phot.ai', 'assigned-phrase-1');
     await call('DELETE', `/api/team/${second.id}`, { cookie: owner });
 
     const added = readAudit(db, { action: 'team.add', limit: 20 }).find(
@@ -243,7 +243,7 @@ describe('H-12 audit trail', () => {
 
   test('failed and successful sign-ins are both recorded', async () => {
     await call('POST', '/api/auth/login', {
-      body: { email: 'priya@phot.ai', password: 'not-the-password' },
+      body: { email: 'priya@phot.ai', password: 'not-the-right-one' },
     });
     const failed = entry('auth.login_failed');
     assert.equal(failed.actor_email, 'priya@phot.ai');

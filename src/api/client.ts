@@ -96,9 +96,12 @@ const del = <T>(path: string) => request<T>('DELETE', path);
 export const api = {
   /** Public — tells the sign-in screen whether to offer first-run setup. */
   status: () =>
-    get<{ needsSetup: boolean; googleEnabled: boolean; setupTokenRequired: boolean }>(
-      '/auth/status',
-    ),
+    get<{
+      needsSetup: boolean;
+      googleEnabled: boolean;
+      setupTokenRequired: boolean;
+      minPasswordLength: number;
+    }>('/auth/status'),
   session: () => get<Snapshot>('/auth/session'),
   login: (email: string, password: string) => post<Snapshot>('/auth/login', { email, password }),
   /** Creates the workspace's first Owner. Only available while it has no users. */

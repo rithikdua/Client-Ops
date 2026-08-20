@@ -55,6 +55,8 @@ export interface AppStateShape {
   googleEnabled: boolean;
   /** Whether first-run setup requires the deployment's SETUP_TOKEN. */
   setupTokenRequired: boolean;
+  /** Minimum password length this deployment enforces; shown on the forms. */
+  minPasswordLength: number;
   /** Reset token from the URL, when the app was opened through a reset link. */
   resetToken: string | null;
   /** A mutation is in flight. */
@@ -114,6 +116,7 @@ const initialState = (): AppStateShape => ({
   status: readLaunchParams().resetToken ? 'reset' : 'loading',
   googleEnabled: false,
   setupTokenRequired: false,
+  minPasswordLength: 12,
   resetToken: readLaunchParams().resetToken,
   busy: false,
   error: null,
@@ -414,9 +417,14 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       .catch(async (err) => {
         if (cancelled) return;
         if (err instanceof ApiError && err.isUnauthorized) {
-          const { needsSetup, googleEnabled, setupTokenRequired } = await api
+          const { needsSetup, googleEnabled, setupTokenRequired, minPasswordLength } = await api
             .status()
-            .catch(() => ({ needsSetup: false, googleEnabled: false, setupTokenRequired: false }));
+            .catch(() => ({
+              needsSetup: false,
+              googleEnabled: false,
+              setupTokenRequired: false,
+              minPasswordLength: stateRef.current.minPasswordLength,
+            }));
           // A failed Google round trip comes back as ?authError=… on the URL. Read
           // from the captured value, not the live URL, for the same reason as the
           // reset token above.
@@ -427,6 +435,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
               status: needsSetup ? 'setup' : 'signed-out',
               googleEnabled,
               setupTokenRequired,
+              minPasswordLength,
               error: authError,
             });
           }

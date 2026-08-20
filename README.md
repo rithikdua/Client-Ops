@@ -90,7 +90,7 @@ whose permissions differ:
 npm run db:demo   # DESTRUCTIVE: wipes the database, then loads the sample workspace
 ```
 
-That gives you these logins, all with the password `demo1234`:
+That gives you these logins, all with the password `demo-pass-2026!`:
 
 | Email | Permission | Sees |
 |---|---|---|
@@ -104,7 +104,7 @@ model working. Demo data is never loaded automatically; set `SEED_DEMO_DATA=1` i
 you want the server to load it on an empty database at boot.
 
 ```bash
-npm test           # 220 server tests (node:test)
+npm test           # 230 server tests (node:test)
 npm run typecheck  # both tsconfigs
 npm run build      # typecheck + production web build
 npm start          # production API (NODE_ENV=production)
@@ -291,6 +291,13 @@ where it counts:
   `X-Content-Type-Options: nosniff`. Per-request, per-account and per-workspace
   size limits keep one person from filling the disk, and `npm run uploads:gc`
   removes files nothing references any more.
+- **Passwords have to survive a guess, not just a length check.** At least 12
+  characters (`MIN_PASSWORD_LENGTH`), and refused if they are a common password,
+  a character-substituted version of one (`P@ssw0rd` is `password`), built from
+  the account holder's own name or email, a sequential run, or too repetitive.
+  Every rejection says which rule it broke, since "not strong enough" is
+  answered by adding an exclamation mark. An optional Have I Been Pwned check
+  (`PASSWORD_BREACH_CHECK=1`) uses k-anonymity and fails open.
 - **Billing and cash are counted separately.** The finance summary answers two
   questions, and says which is which: what was billed comes from invoices *issued*
   in the period, what came in comes from payments *dated* in it. An invoice

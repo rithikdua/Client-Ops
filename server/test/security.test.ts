@@ -9,7 +9,7 @@ const { openDb } = await import('../src/db/index');
 const { seedDemoWorkspace } = await import('../src/db/seed');
 
 const db = openDb(':memory:');
-seedDemoWorkspace(db, { password: 'demo1234' });
+seedDemoWorkspace(db, { password: 'demo-pass-2026!' });
 const server = createApp(db).listen(0);
 const port = (server.address() as AddressInfo).port;
 const base = `http://127.0.0.1:${port}`;
@@ -21,7 +21,7 @@ before(async () => {
   const response = await fetch(`${base}/api/auth/login`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ email: 'priya@phot.ai', password: 'demo1234' }),
+    body: JSON.stringify({ email: 'priya@phot.ai', password: 'demo-pass-2026!' }),
   });
   assert.equal(response.status, 200);
   const setCookie = response.headers.getSetCookie?.()[0] ?? response.headers.get('set-cookie') ?? '';
