@@ -3,7 +3,7 @@
   "private": true,
   "version": "0.1.0",
   "type": "module",
-  "description": "Phot.AI Client Ops — B2B client management dashboard",
+  "description": "Phot.AI Client Ops \u2014 B2B client management dashboard",
   "scripts": {
     "dev": "concurrently -n api,web -c magenta,cyan \"npm:dev:api\" \"npm:dev:web\"",
     "dev:api": "tsx watch server/src/index.ts",
@@ -17,7 +17,10 @@
     "create-user": "tsx server/scripts/create-user.ts",
     "db:demo": "tsx server/scripts/reset.ts --demo",
     "uploads:gc": "tsx server/scripts/gc-uploads.ts",
-    "audit": "tsx server/scripts/audit.ts"
+    "audit": "tsx server/scripts/audit.ts",
+    "backup": "tsx server/scripts/backup.ts",
+    "restore": "tsx server/scripts/restore.ts",
+    "maintenance": "tsx server/scripts/maintenance.ts"
   },
   "dependencies": {
     "better-sqlite3": "^13.0.3",
