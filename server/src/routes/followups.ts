@@ -3,6 +3,7 @@ import { requireSection, requireWrite } from '../auth/permissions';
 import { newId, transact, type Db } from '../db/index';
 import { addDaysISO, todayISO } from '../domain/activity';
 import { audit } from '../domain/audit';
+import { bumpVersion } from '../domain/versions';
 import { notFound } from '../http/errors';
 import { completeFollowUpSchema, followUpSchema } from '../http/validate';
 import { snapshotFor } from './clients';
@@ -42,6 +43,7 @@ export function followUpRoutes(db: Db): Router {
       throw notFound('Follow-up');
     }
     const input = followUpSchema.parse(req.body);
+    bumpVersion(db, 'follow_ups', followUpId, input.version);
     db.prepare(
       `UPDATE follow_ups SET
          name = ?, company_name = ?, email = ?, phone = ?, related_client_id = ?,

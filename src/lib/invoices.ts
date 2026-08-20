@@ -1,5 +1,5 @@
 import type { Deliverable, Invoice, Payment } from '../data/types';
-import { TODAY, parseISO } from './dates';
+import { today, parseISO } from './dates';
 
 export type InvoiceStatus = 'Paid' | 'Partially Paid' | 'Pending';
 /** What a row displays — `Overdue` replaces the underlying status in the UI. */
@@ -34,7 +34,7 @@ export function invoiceStatus(inv: Invoice): InvoiceStatus {
 }
 
 export function isInvoiceOverdue(inv: Invoice): boolean {
-  return invoiceStatus(inv) !== 'Paid' && parseISO(inv.dueDate) < TODAY;
+  return invoiceStatus(inv) !== 'Paid' && parseISO(inv.dueDate) < today();
 }
 
 export function invoiceStatusLabel(inv: Invoice): InvoiceStatusLabel {
@@ -42,7 +42,7 @@ export function invoiceStatusLabel(inv: Invoice): InvoiceStatusLabel {
 }
 
 export function isDeliverableOverdue(d: Deliverable): boolean {
-  return d.status !== 'Done' && parseISO(d.dueDate) < TODAY;
+  return d.status !== 'Done' && parseISO(d.dueDate) < today();
 }
 
 /** Percentage of an invoice collected, floored at 2% so the bar stays visible. */

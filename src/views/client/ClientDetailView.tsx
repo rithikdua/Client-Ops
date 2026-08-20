@@ -4,7 +4,7 @@ import { Button } from '../../ds/Button';
 import { Chip } from '../../ds/Chip';
 import { Icon } from '../../ds/Icon';
 import { MetaCell } from '../../components/ui';
-import { currentBillingPeriod, cyclePeriodLabel, fmtDate, fmtDateObj, parseISO, TODAY } from '../../lib/dates';
+import { currentBillingPeriod, cyclePeriodLabel, fmtDate, fmtDateObj, parseISO, today } from '../../lib/dates';
 import { invoiceBalance, invoicePaidAmount } from '../../lib/invoices';
 import { fmtMoney } from '../../lib/money';
 import { healthColor, stageColor } from '../../lib/statusColors';
@@ -55,7 +55,7 @@ export function ClientDetailView({ client }: { client: Client }) {
         .reduce((a, i) => a + invoicePaidAmount(i), 0)
     : 0;
   const daysUntilNextBilling = period
-    ? Math.round((period.end.getTime() - TODAY.getTime()) / 86400000)
+    ? Math.round((period.end.getTime() - today().getTime()) / 86400000)
     : 0;
   const billingSoon = daysUntilNextBilling <= 7;
   const isOneTime = client.billingCycle === 'One-time';

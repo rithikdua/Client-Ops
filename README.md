@@ -104,7 +104,7 @@ model working. Demo data is never loaded automatically; set `SEED_DEMO_DATA=1` i
 you want the server to load it on an empty database at boot.
 
 ```bash
-npm test           # 188 server tests (node:test)
+npm test           # 220 server tests (node:test)
 npm run typecheck  # both tsconfigs
 npm run build      # typecheck + production web build
 npm start          # production API (NODE_ENV=production)
@@ -291,6 +291,42 @@ where it counts:
   `X-Content-Type-Options: nosniff`. Per-request, per-account and per-workspace
   size limits keep one person from filling the disk, and `npm run uploads:gc`
   removes files nothing references any more.
+- **Billing and cash are counted separately.** The finance summary answers two
+  questions, and says which is which: what was billed comes from invoices *issued*
+  in the period, what came in comes from payments *dated* in it. An invoice
+  raised on 31 July and paid on 10 August belongs to July's billing and to
+  August's cash — it used to be reported as July cash that was still sitting in
+  the client's account.
+- **Dates are checked against each other, not just individually.** An invoice due
+  before it was issued, a contract ending before it starts, or an onboarding date
+  preceding the contract are all refused — including on a patch that changes only
+  one of them, which is judged against the record it would produce. Invoice
+  numbers are unique per client, in the route and in the database; a workspace
+  that already contains duplicates still starts, names them, and refuses new ones.
+- **A stale edit is refused, not silently applied.** Clients, tasks, deliverables
+  and follow-ups carry a version; a save sends the version the form was opened
+  with, and the server applies it only if that is still current. Otherwise the
+  writer is told, their form stays open with their text intact, and the screen
+  behind refreshes to show what actually changed. Requests that send no version
+  keep the old behaviour, so scripts are unaffected.
+- **Responses are applied in order.** Every request takes a ticket before it
+  leaves; a reply carrying an older ticket than one already applied is dropped.
+  Without it a refresh issued a moment earlier can be overtaken by a write and
+  land afterwards, silently undoing what you just did on screen while the server
+  has it right — nothing to retry, and no sign anything happened.
+- **One intent, one record.** Every create accepts an `Idempotency-Key`
+  identifying what the user is trying to do; a second request carrying a key
+  already seen is answered with the current state instead of inserting again.
+  The browser mints one per open form and keeps it across retries, so a second
+  click on a slow connection — or a phone that reconnects mid-request — logs one
+  payment, not two. A failed request does not spend its key, and two identical
+  instalments are still two payments: only a repeated *key* means a repeat.
+- **One business timezone.** `WORKSPACE_TIMEZONE` (default `Asia/Kolkata`) decides
+  what "today" means for the whole system, and the server sends it with every
+  snapshot so the browser measures the same calendar day. Neither side asks its
+  own machine: a UTC container and a team in Mumbai disagree for five and a half
+  hours of every day, which is long enough for evening work to be filed under
+  tomorrow.
 - **Currencies are never mixed.** Cross-client roll-ups — outstanding balance,
   portfolio value, the whole finance summary — keep one total per currency and
   show them side by side. Nothing is converted, because there are no FX rates

@@ -10,6 +10,8 @@ export interface Snapshot {
   clients: Client[];
   team: Teammate[];
   followUps: FollowUp[];
+  /** Workspace-wide settings; see `setWorkspaceTimezone`. */
+  workspace?: { timezone: string };
 }
 
 export interface Me {
@@ -44,14 +46,27 @@ export class ApiError extends Error {
   }
 }
 
-async function request<T>(method: string, path: string, body?: unknown): Promise<T> {
+async function request<T>(
+  method: string,
+  path: string,
+  body?: unknown,
+  /**
+   * Identifies the user's *intent*, not the request. Sent unchanged when the
+   * same action is submitted again — a double click, or a retry after the
+   * connection dropped — so the server can tell a repeat from a new record.
+   */
+  idempotencyKey?: string,
+): Promise<T> {
   let response: Response;
   try {
     response = await fetch(`/api${path}`, {
       method,
       // Session lives in an httpOnly cookie, so it must ride along.
       credentials: 'same-origin',
-      headers: body === undefined ? undefined : { 'content-type': 'application/json' },
+      headers: {
+        ...(body === undefined ? {} : { 'content-type': 'application/json' }),
+        ...(idempotencyKey ? { 'idempotency-key': idempotencyKey } : {}),
+      },
       body: body === undefined ? undefined : JSON.stringify(body),
     });
   } catch {
@@ -71,7 +86,8 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
 }
 
 const get = <T>(path: string) => request<T>('GET', path);
-const post = <T>(path: string, body?: unknown) => request<T>('POST', path, body ?? {});
+const post = <T>(path: string, body?: unknown, key?: string) =>
+  request<T>('POST', path, body ?? {}, key);
 const patch = <T>(path: string, body: unknown) => request<T>('PATCH', path, body);
 const put = <T>(path: string, body: unknown) => request<T>('PUT', path, body);
 const del = <T>(path: string) => request<T>('DELETE', path);
@@ -107,51 +123,56 @@ export const api = {
   startPreview: (teammateId: string) => post<Snapshot>('/auth/preview', { teammateId }),
   exitPreview: () => del<Snapshot>('/auth/preview'),
 
-  createClient: (body: unknown) => post<Snapshot>('/clients', body),
+  createClient: (body: unknown, key?: string) => post<Snapshot>('/clients', body, key),
   updateClient: (clientId: string, body: unknown) => patch<Snapshot>(`/clients/${clientId}`, body),
 
-  addContact: (clientId: string, body: unknown) => post<Snapshot>(`/clients/${clientId}/contacts`, body),
-  addContactAnywhere: (body: unknown) => post<Snapshot>('/contacts', body),
+  addContact: (clientId: string, body: unknown, key?: string) =>
+    post<Snapshot>(`/clients/${clientId}/contacts`, body, key),
+  addContactAnywhere: (body: unknown, key?: string) => post<Snapshot>('/contacts', body, key),
   removeContact: (clientId: string, contactId: string) =>
     del<Snapshot>(`/clients/${clientId}/contacts/${contactId}`),
 
-  addInvoice: (clientId: string, body: unknown) => post<Snapshot>(`/clients/${clientId}/invoices`, body),
+  addInvoice: (clientId: string, body: unknown, key?: string) =>
+    post<Snapshot>(`/clients/${clientId}/invoices`, body, key),
   removeInvoice: (clientId: string, invoiceId: string) =>
     del<Snapshot>(`/clients/${clientId}/invoices/${invoiceId}`),
   setInvoiceFile: (clientId: string, invoiceId: string, body: unknown) =>
     put<Snapshot>(`/clients/${clientId}/invoices/${invoiceId}/file`, body),
   clearInvoiceFile: (clientId: string, invoiceId: string) =>
     del<Snapshot>(`/clients/${clientId}/invoices/${invoiceId}/file`),
-  addPayment: (clientId: string, invoiceId: string, body: unknown) =>
-    post<Snapshot>(`/clients/${clientId}/invoices/${invoiceId}/payments`, body),
+  addPayment: (clientId: string, invoiceId: string, body: unknown, key?: string) =>
+    post<Snapshot>(`/clients/${clientId}/invoices/${invoiceId}/payments`, body, key),
   settleInvoice: (clientId: string, invoiceId: string) =>
     post<Snapshot>(`/clients/${clientId}/invoices/${invoiceId}/settle`),
   removePayment: (clientId: string, invoiceId: string, paymentId: string) =>
     del<Snapshot>(`/clients/${clientId}/invoices/${invoiceId}/payments/${paymentId}`),
 
-  addDeliverable: (clientId: string, body: unknown) =>
-    post<Snapshot>(`/clients/${clientId}/deliverables`, body),
+  addDeliverable: (clientId: string, body: unknown, key?: string) =>
+    post<Snapshot>(`/clients/${clientId}/deliverables`, body, key),
   updateDeliverable: (clientId: string, deliverableId: string, body: unknown) =>
     patch<Snapshot>(`/clients/${clientId}/deliverables/${deliverableId}`, body),
   removeDeliverable: (clientId: string, deliverableId: string) =>
     del<Snapshot>(`/clients/${clientId}/deliverables/${deliverableId}`),
 
-  addDocument: (clientId: string, body: unknown) => post<Snapshot>(`/clients/${clientId}/documents`, body),
+  addDocument: (clientId: string, body: unknown, key?: string) =>
+    post<Snapshot>(`/clients/${clientId}/documents`, body, key),
   removeDocument: (clientId: string, documentId: string) =>
     del<Snapshot>(`/clients/${clientId}/documents/${documentId}`),
 
-  addActivity: (clientId: string, body: unknown) => post<Snapshot>(`/clients/${clientId}/activity`, body),
+  addActivity: (clientId: string, body: unknown, key?: string) =>
+    post<Snapshot>(`/clients/${clientId}/activity`, body, key),
 
-  addTask: (clientId: string, body: unknown) => post<Snapshot>(`/clients/${clientId}/tasks`, body),
+  addTask: (clientId: string, body: unknown, key?: string) =>
+    post<Snapshot>(`/clients/${clientId}/tasks`, body, key),
   updateTask: (clientId: string, taskId: string, body: unknown) =>
     patch<Snapshot>(`/clients/${clientId}/tasks/${taskId}`, body),
   removeTask: (clientId: string, taskId: string) => del<Snapshot>(`/clients/${clientId}/tasks/${taskId}`),
 
-  addTeammate: (body: unknown) => post<Snapshot>('/team', body),
+  addTeammate: (body: unknown, key?: string) => post<Snapshot>('/team', body, key),
   setTeammateAccess: (userId: string, access: Access) => put<Snapshot>(`/team/${userId}/access`, { access }),
   removeTeammate: (userId: string) => del<Snapshot>(`/team/${userId}`),
 
-  addFollowUp: (body: unknown) => post<Snapshot>('/followups', body),
+  addFollowUp: (body: unknown, key?: string) => post<Snapshot>('/followups', body, key),
   updateFollowUp: (id: string, body: unknown) => patch<Snapshot>(`/followups/${id}`, body),
   completeFollowUp: (id: string, body: unknown) => post<Snapshot>(`/followups/${id}/complete`, body),
   reopenFollowUp: (id: string) => post<Snapshot>(`/followups/${id}/reopen`),

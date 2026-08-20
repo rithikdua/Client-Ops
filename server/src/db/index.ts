@@ -7,7 +7,7 @@ import { fileURLToPath } from 'node:url';
 
 const here = dirname(fileURLToPath(import.meta.url));
 
-export const SCHEMA_VERSION = 6;
+export const SCHEMA_VERSION = 9;
 
 /** Absolute path to the SQLite file. Override with DATABASE_PATH. */
 export const DB_PATH = envString('DATABASE_PATH', join(here, '..', '..', 'data', 'client-ops.db'));
@@ -39,7 +39,45 @@ export function openDb(path: string = DB_PATH): Db {
     db.prepare('UPDATE schema_version SET version = ?').run(SCHEMA_VERSION);
   }
 
+  ensureInvoiceNumberIndex(db);
+
   return db;
+}
+
+/**
+ * Adds the unique invoice-number constraint, unless the data already breaks it.
+ *
+ * An invoice number is the reference a payment is matched by — in the bank
+ * statement, in the client's ledger, in the email chasing it — so two invoices
+ * on one account sharing a number makes all of those ambiguous. New ones are
+ * refused by the route regardless; this is the database saying the same thing.
+ *
+ * It is deliberately not in schema.sql, which is executed on every open: a
+ * workspace that already contains duplicates would then fail to start, turning a
+ * data-quality problem into an outage. Renumbering someone's invoices
+ * automatically would be worse still, so the duplicates are named and left
+ * alone.
+ */
+function ensureInvoiceNumberIndex(db: Db): void {
+  const duplicates = db
+    .prepare(
+      `SELECT client_id, number, COUNT(*) AS n FROM invoices
+        GROUP BY client_id, number HAVING n > 1`,
+    )
+    .all() as { client_id: string; number: string; n: number }[];
+
+  if (duplicates.length === 0) {
+    db.exec(
+      'CREATE UNIQUE INDEX IF NOT EXISTS idx_invoices_client_number ON invoices(client_id, number)',
+    );
+    return;
+  }
+
+  console.warn(
+    '[client-ops] duplicate invoice numbers found, so the uniqueness constraint was not added. ' +
+      'New duplicates are still refused. Renumber these and restart: ' +
+      duplicates.map((d) => `${d.number} (client ${d.client_id}, ${d.n} copies)`).join(', '),
+  );
 }
 
 /**
@@ -48,6 +86,31 @@ export function openDb(path: string = DB_PATH): Db {
  * existing table has to be applied here too.
  */
 function migrate(db: Db, from: number): void {
+  // v9 (unique invoice numbers) is applied by ensureInvoiceNumberIndex on every
+  // open, since it has to be conditional on the data.
+  if (from < 8) {
+    // v8: optimistic concurrency. Existing rows start at version 1.
+    for (const table of ['clients', 'tasks', 'deliverables', 'follow_ups']) {
+      const columns = db.prepare(`PRAGMA table_info(${table})`).all() as { name: string }[];
+      if (!columns.some((c) => c.name === 'version')) {
+        db.exec(`ALTER TABLE ${table} ADD COLUMN version INTEGER NOT NULL DEFAULT 1`);
+      }
+    }
+  }
+  if (from < 7) {
+    // v7: idempotency keys, so one user intent cannot become two records.
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS idempotency_keys (
+        key          TEXT NOT NULL,
+        user_id      TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        endpoint     TEXT NOT NULL,
+        request_hash TEXT NOT NULL,
+        created_at   TEXT NOT NULL,
+        PRIMARY KEY (key, user_id)
+      );
+      CREATE INDEX IF NOT EXISTS idx_idempotency_created ON idempotency_keys(created_at);
+    `);
+  }
   if (from < 6) {
     // v6: an attachment belongs to the section it is attached to, not always to
     // `clients`. Existing rows are relabelled from whatever references them, so

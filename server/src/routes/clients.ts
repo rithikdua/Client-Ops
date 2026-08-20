@@ -2,10 +2,11 @@ import { Router, type Request } from 'express';
 import { requireSection, requireWrite } from '../auth/permissions';
 import { newId, transact, type Db } from '../db/index';
 import { logSystemActivity, todayISO } from '../domain/activity';
+import { bumpVersion } from '../domain/versions';
 import { audit } from '../domain/audit';
 import { buildSnapshot } from '../domain/snapshot';
 import { HttpError, notFound } from '../http/errors';
-import { clientPatchSchema, clientSchema } from '../http/validate';
+import { checkClientDates, clientPatchSchema, clientSchema } from '../http/validate';
 import { fromMinor, gstBreakdown, toMinor } from '../money';
 
 /** Fails the request unless the client exists. */
@@ -170,6 +171,24 @@ export function clientRoutes(db: Db): Router {
     const input = clientPatchSchema.parse(req.body);
     requireMoneyAccess(req, input);
 
+    // A patch may set only one of the three dates, so the rules are checked
+    // against the record as it will be *after* the change, not just the payload.
+    const stored = db
+      .prepare('SELECT start_date, onboarding_date, contract_end_date FROM clients WHERE id = ?')
+      .get(clientId) as {
+      start_date: string;
+      onboarding_date: string | null;
+      contract_end_date: string | null;
+    };
+    const dateIssues = checkClientDates({
+      startDate: input.startDate ?? stored.start_date,
+      onboardingDate: input.onboardingDate ?? stored.onboarding_date ?? '',
+      contractEndDate: input.contractEndDate ?? stored.contract_end_date ?? '',
+    });
+    if (dateIssues.length > 0) {
+      throw new HttpError(400, dateIssues[0].message, dateIssues);
+    }
+
     const columns: Record<string, unknown> = {};
     const map: Record<string, string> = {
       name: 'name',
@@ -205,6 +224,8 @@ export function clientRoutes(db: Db): Router {
     if (Object.keys(columns).length === 0) throw new HttpError(400, 'Nothing to update.');
 
     transact(db, () => {
+      // First, so a stale write is refused before anything is changed.
+      bumpVersion(db, 'clients', clientId, input.version);
       const assignments = Object.keys(columns)
         .map((c) => `${c} = @${c}`)
         .join(', ');

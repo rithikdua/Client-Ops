@@ -24,7 +24,14 @@ import type {
   Teammate,
   View,
 } from '../data/types';
-import { addDays, parseISO, toISO, todayISO, type InvoicePeriod } from '../lib/dates';
+import {
+  addDays,
+  parseISO,
+  setWorkspaceTimezone,
+  toISO,
+  todayISO,
+  type InvoicePeriod,
+} from '../lib/dates';
 import { minorToInput } from '../lib/money';
 import type { FormKey, ModalForm, ModalState } from './modal';
 
@@ -89,6 +96,13 @@ function readLaunchParams(): { resetToken: string | null; authError: string | nu
   if (typeof window === 'undefined') return { resetToken: null, authError: null };
   const params = new URLSearchParams(window.location.search);
   return { resetToken: params.get('reset'), authError: params.get('authError') };
+}
+
+/** UUID where available; randomUUID needs a secure context, LAN http is not. */
+function newIntentKey(): string {
+  const c = typeof crypto !== 'undefined' ? crypto : undefined;
+  if (c?.randomUUID) return c.randomUUID();
+  return `k-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 12)}`;
 }
 
 const initialState = (): AppStateShape => ({
@@ -248,6 +262,35 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
   const stateRef = useRef(state);
   stateRef.current = state;
 
+  /**
+   * Identifies what the user is trying to do, for as long as the modal is open.
+   *
+   * Sent as Idempotency-Key so that submitting the same form twice — a second
+   * click while the first request is still in flight, or a retry after the
+   * connection dropped — creates one record rather than two. Reset when the
+   * modal closes, so genuinely logging the same amount twice still works.
+   */
+  const intentKeyRef = useRef<string | null>(null);
+  const intentKey = () => (intentKeyRef.current ??= newIntentKey());
+
+  /**
+   * Orders the snapshots coming back from the server.
+   *
+   * Every mutation answers with the whole workspace, and responses do not have
+   * to arrive in the order they were sent: a refresh issued a moment ago can be
+   * overtaken by a write and land afterwards, carrying state assembled before
+   * that write existed. Applying it would silently undo what the person just
+   * did on screen — the row reappears, the note vanishes — while the server has
+   * it right, which is the worst kind of wrong: nothing to retry, and no sign
+   * anything happened.
+   *
+   * Each request takes a ticket before it leaves; a reply holding an older
+   * ticket than one already applied is dropped.
+   */
+  const requestSeqRef = useRef(0);
+  const appliedSeqRef = useRef(0);
+  const nextRequestSeq = () => ++requestSeqRef.current;
+
   const patch = useCallback(
     (updater: Partial<AppStateShape> | ((s: AppStateShape) => Partial<AppStateShape>)) => {
       setState((s) => ({ ...s, ...(typeof updater === 'function' ? updater(s) : updater) }));
@@ -255,8 +298,21 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
     [],
   );
 
+  useEffect(() => {
+    if (!state.modal) intentKeyRef.current = null;
+  }, [state.modal]);
+
   const applySnapshot = useCallback(
-    (snapshot: Snapshot, extra?: Partial<AppStateShape>) => {
+    (snapshot: Snapshot, extra?: Partial<AppStateShape>, seq?: number) => {
+      // Out of order: something newer is already on screen. Dropping this is the
+      // whole point — see nextRequestSeq above.
+      if (seq !== undefined) {
+        if (seq < appliedSeqRef.current) return;
+        appliedSeqRef.current = seq;
+      }
+      // Adopt the workspace's calendar before anything derived from a date is
+      // recomputed, so "today" is the same day the server would name.
+      setWorkspaceTimezone(snapshot.workspace?.timezone);
       patch((s) => {
         const next = { ...s, ...extra };
         return {
@@ -293,9 +349,15 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
         patch({ error: 'Your account is read-only, so nothing was changed.' });
         return;
       }
+      // One mutation at a time. A second click while the first is still in
+      // flight is the same intent, not a new one — and on a slow connection
+      // that is exactly what an impatient person does. The server's
+      // idempotency key is the real defence; this stops the request leaving.
+      if (stateRef.current.busy) return;
       patch({ busy: true, error: null });
+      const seq = nextRequestSeq();
       try {
-        applySnapshot(await fn(), opts.onSuccess);
+        applySnapshot(await fn(), opts.onSuccess, seq);
       } catch (err) {
         if (err instanceof ApiError && err.isUnauthorized) {
           patch({ status: 'signed-out', me: null, clients: [], team: [], followUps: [], busy: false });
@@ -306,6 +368,21 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
             ? ` (${err.details.map((d) => d.message).join(' ')})`
             : '';
         patch({ busy: false, error: (err instanceof Error ? err.message : 'Something went wrong.') + detail });
+        // A version conflict means this screen is showing something stale. Pull
+        // the current state in so the message and the data agree — carrying the
+        // message through, because applySnapshot clears the error banner and
+        // refreshing silently would leave the person with a form that just
+        // refused to save and no explanation.
+        if (err instanceof ApiError && err.status === 409) {
+          const conflict = err.message;
+          const refreshSeq = nextRequestSeq();
+          api
+            .session()
+            .then((snapshot) => applySnapshot(snapshot, { busy: false, error: conflict }, refreshSeq))
+            .catch(() => {
+              /* the banner already says what happened */
+            });
+        }
       }
     },
     [applySnapshot, patch],
@@ -327,11 +404,12 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       };
     }
 
+    const resumeSeq = nextRequestSeq();
     api
       .session()
       .then((snapshot) => {
         if (window.location.search) window.history.replaceState({}, '', window.location.pathname);
-        if (!cancelled) applySnapshot(snapshot);
+        if (!cancelled) applySnapshot(snapshot, undefined, resumeSeq);
       })
       .catch(async (err) => {
         if (cancelled) return;
@@ -558,6 +636,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
           type: 'client',
           editing: true,
           clientId: client.id,
+          version: client.version,
           form: {
             name: client.name,
             industry: client.industry,
@@ -700,6 +779,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
             type: 'followup',
             editing: true,
             followUpId: f.id,
+            version: f.version,
             form: {
               name: f.name,
               companyName: f.companyName || '',
@@ -744,6 +824,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
           clientId,
           editing: true,
           taskId: task.id,
+          version: task.version,
           form: {
             title: task.title,
             assignee: task.assignee || firstTeamName(),
@@ -880,7 +961,9 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
               scopeOfWork: f.scopeOfWork ?? '',
             };
             if (modal.editing) {
-              void run(() => api.updateClient(modal.clientId!, body), { onSuccess: closed });
+              void run(() => api.updateClient(modal.clientId!, { ...body, version: modal.version }), {
+                onSuccess: closed,
+              });
             } else {
               if (f.contactName) {
                 body.contact = {
@@ -896,7 +979,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
                   dueDate: f.initialCommitmentDue || '',
                 };
               }
-              void run(() => api.createClient(body), { onSuccess: closed });
+              void run(() => api.createClient(body, intentKey()), { onSuccess: closed });
             }
             return;
           }
@@ -908,15 +991,18 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
               phone: f.phone ?? '',
             };
             if (modal.clientId) {
-              void run(() => api.addContact(modal.clientId!, contact), { onSuccess: closed });
+              void run(() => api.addContact(modal.clientId!, contact, intentKey()), { onSuccess: closed });
             } else {
               void run(
                 () =>
-                  api.addContactAnywhere({
-                    ...contact,
-                    clientId: f.clientId ?? '',
-                    newClientName: f.newClientName ?? '',
-                  }),
+                  api.addContactAnywhere(
+                    {
+                      ...contact,
+                      clientId: f.clientId ?? '',
+                      newClientName: f.newClientName ?? '',
+                    },
+                    intentKey(),
+                  ),
                 { onSuccess: closed },
               );
             }
@@ -925,26 +1011,35 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
           case 'invoice':
             void run(
               () =>
-                api.addInvoice(modal.clientId!, {
-                  number: f.number ?? '',
-                  baseAmount: Number(f.baseAmount) || 0,
-                  gstPercent: Number(f.gstPercent) || 0,
-                  gstMode: f.gstMode === 'included' ? 'included' : 'excluded',
-                  issueDate: f.issueDate || todayISO(),
-                  dueDate: f.dueDate || todayISO(),
-                  ...fileFields(f),
-                }),
+                api.addInvoice(
+                  modal.clientId!,
+                  {
+                    number: f.number ?? '',
+                    baseAmount: Number(f.baseAmount) || 0,
+                    gstPercent: Number(f.gstPercent) || 0,
+                    gstMode: f.gstMode === 'included' ? 'included' : 'excluded',
+                    issueDate: f.issueDate || todayISO(),
+                    dueDate: f.dueDate || todayISO(),
+                    ...fileFields(f),
+                  },
+                  intentKey(),
+                ),
               { onSuccess: closed },
             );
             return;
           case 'logPayment':
             void run(
               () =>
-                api.addPayment(modal.clientId!, modal.invId!, {
-                  bankAmount: Number(f.bankAmount) || 0,
-                  tds: Number(f.tds) || 0,
-                  date: f.date || todayISO(),
-                }),
+                api.addPayment(
+                  modal.clientId!,
+                  modal.invId!,
+                  {
+                    bankAmount: Number(f.bankAmount) || 0,
+                    tds: Number(f.tds) || 0,
+                    date: f.date || todayISO(),
+                  },
+                  intentKey(),
+                ),
               { onSuccess: closed },
             );
             return;
@@ -956,14 +1051,18 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
           case 'deliverable':
             void run(
               () =>
-                api.addDeliverable(modal.clientId!, {
-                  title: f.title ?? '',
-                  description: f.description ?? '',
-                  owner: f.owner ?? '',
-                  dueDate: f.dueDate || todayISO(),
-                  status: f.status ?? 'Not started',
-                  ...fileFields(f),
-                }),
+                api.addDeliverable(
+                  modal.clientId!,
+                  {
+                    title: f.title ?? '',
+                    description: f.description ?? '',
+                    owner: f.owner ?? '',
+                    dueDate: f.dueDate || todayISO(),
+                    status: f.status ?? 'Not started',
+                    ...fileFields(f),
+                  },
+                  intentKey(),
+                ),
               { onSuccess: closed },
             );
             return;
@@ -975,17 +1074,21 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
           case 'document':
             void run(
               () =>
-                api.addDocument(modal.clientId!, {
-                  name: f.name ?? '',
-                  type: f.type ?? 'Other',
-                  url: f.fileUrl ?? '',
-                  source: f.source === 'client' ? 'client' : 'us',
-                }),
+                api.addDocument(
+                  modal.clientId!,
+                  {
+                    name: f.name ?? '',
+                    type: f.type ?? 'Other',
+                    url: f.fileUrl ?? '',
+                    source: f.source === 'client' ? 'client' : 'us',
+                  },
+                  intentKey(),
+                ),
               { onSuccess: closed },
             );
             return;
           case 'activity':
-            void run(() => api.addActivity(modal.clientId!, { note: f.note ?? '' }), {
+            void run(() => api.addActivity(modal.clientId!, { note: f.note ?? '' }, intentKey()), {
               onSuccess: closed,
             });
             return;
@@ -1002,8 +1105,8 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
             void run(
               () =>
                 modal.editing
-                  ? api.updateTask(modal.clientId!, modal.taskId!, body)
-                  : api.addTask(modal.clientId!, body),
+                  ? api.updateTask(modal.clientId!, modal.taskId!, { ...body, version: modal.version })
+                  : api.addTask(modal.clientId!, body, intentKey()),
               { onSuccess: closed },
             );
             return;
@@ -1011,14 +1114,17 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
           case 'teammate':
             void run(
               () =>
-                api.addTeammate({
-                  name: f.name ?? '',
-                  email: f.email ?? '',
-                  role: f.role ?? '',
-                  permission: f.permission ?? 'Editor',
-                  password: f.password ?? '',
-                  access: f.access ?? { ...ALL_ACCESS },
-                }),
+                api.addTeammate(
+                  {
+                    name: f.name ?? '',
+                    email: f.email ?? '',
+                    role: f.role ?? '',
+                    permission: f.permission ?? 'Editor',
+                    password: f.password ?? '',
+                    access: f.access ?? { ...ALL_ACCESS },
+                  },
+                  intentKey(),
+                ),
               { onSuccess: closed },
             );
             return;
@@ -1040,7 +1146,10 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
               dueDate: f.dueDate || todayISO(),
             };
             void run(
-              () => (modal.editing ? api.updateFollowUp(modal.followUpId!, body) : api.addFollowUp(body)),
+              () =>
+                modal.editing
+                  ? api.updateFollowUp(modal.followUpId!, { ...body, version: modal.version })
+                  : api.addFollowUp(body, intentKey()),
               { onSuccess: closed },
             );
             return;

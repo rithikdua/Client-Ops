@@ -62,6 +62,26 @@ export function envNumber(
   return value;
 }
 
+/**
+ * The workspace's business timezone, as an IANA name.
+ *
+ * A calendar day has to mean one thing across the whole system. Left to each
+ * machine's local zone, a server in UTC and a team in Mumbai disagree about the
+ * date for five and a half hours out of every twenty-four — long enough that
+ * evening work gets filed under the wrong day, and that the browser's default
+ * date on a form disagrees with the activity entry the server writes for the
+ * same action.
+ */
+export function envTimezone(name: string, fallback: string): string {
+  const raw = envRaw(name) ?? fallback;
+  try {
+    new Intl.DateTimeFormat('en-US', { timeZone: raw });
+  } catch {
+    throw new ConfigError(`${name} must be an IANA timezone such as Asia/Kolkata (got "${raw}")`);
+  }
+  return raw;
+}
+
 /** True for 1/true/yes, false for 0/false/no or unset. Anything else is an error. */
 export function envFlag(name: string): boolean {
   const raw = envRaw(name)?.toLowerCase();

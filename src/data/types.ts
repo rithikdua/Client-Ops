@@ -81,6 +81,8 @@ export interface Invoice {
 
 export interface Deliverable {
   id: string;
+  /** Bumped on every edit; sent back on save so a stale write is refused. */
+  version?: number;
   title: string;
   description: string;
   owner: string;
@@ -110,6 +112,8 @@ export interface ActivityEntry {
 
 export interface Task {
   id: string;
+  /** Bumped on every edit; sent back on save so a stale write is refused. */
+  version?: number;
   title: string;
   description: string;
   assignee: string;
@@ -144,6 +148,8 @@ export interface Client {
   id: string;
   name: string;
   currency: CurrencyCode;
+  /** Bumped on every edit; sent back on save so a stale write is refused. */
+  version?: number;
   contacts: Contact[];
   invoices: Invoice[];
   deliverables: Deliverable[];
@@ -198,6 +204,8 @@ export interface FollowUpLogEntry {
 
 export interface FollowUp {
   id: string;
+  /** Bumped on every edit; sent back on save so a stale write is refused. */
+  version?: number;
   name: string;
   companyName: string;
   email: string;

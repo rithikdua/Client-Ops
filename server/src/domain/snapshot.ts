@@ -14,6 +14,7 @@ import type {
 import type { Actor } from '../auth/permissions';
 import { loadAccess } from '../auth/permissions';
 import type { Db } from '../db/index';
+import { WORKSPACE_TIMEZONE } from './activity';
 
 /**
  * The whole workspace as the current actor is allowed to see it.
@@ -39,6 +40,12 @@ export interface Snapshot {
   clients: Client[];
   team: Teammate[];
   followUps: FollowUp[];
+  /**
+   * Settings that belong to the workspace rather than to the person. The
+   * timezone is here so the browser measures a calendar day exactly as the
+   * server does, instead of each side asking its own machine.
+   */
+  workspace: { timezone: string };
 }
 
 /* -- row shapes ---------------------------------------------------------- */
@@ -46,6 +53,7 @@ export interface Snapshot {
 interface ClientRow {
   id: string;
   name: string;
+  version: number;
   industry: string;
   health: Client['health'];
   owner: string;
@@ -127,7 +135,7 @@ function loadInvoices(db: Db, clientId: string): Invoice[] {
 function loadDeliverables(db: Db, clientId: string): Deliverable[] {
   const rows = db
     .prepare(
-      `SELECT id, title, description, owner, due_date, status, file_name, file_url
+      `SELECT id, title, description, owner, due_date, status, file_name, file_url, version
          FROM deliverables WHERE client_id = ? ORDER BY rowid`,
     )
     .all(clientId) as {
@@ -139,6 +147,7 @@ function loadDeliverables(db: Db, clientId: string): Deliverable[] {
     status: Deliverable['status'];
     file_name: string | null;
     file_url: string | null;
+    version: number;
   }[];
   return rows.map((r) => ({
     id: r.id,
@@ -147,6 +156,7 @@ function loadDeliverables(db: Db, clientId: string): Deliverable[] {
     owner: r.owner,
     dueDate: r.due_date,
     status: r.status,
+    version: r.version,
     file: r.file_url || r.file_name ? { name: orEmpty(r.file_name), url: orEmpty(r.file_url) } : null,
   }));
 }
@@ -184,7 +194,7 @@ function loadActivity(db: Db, clientId: string): ActivityEntry[] {
 function loadTasks(db: Db, clientId: string): Task[] {
   const rows = db
     .prepare(
-      `SELECT id, title, description, assignee, status, priority, due_date
+      `SELECT id, title, description, assignee, status, priority, due_date, version
          FROM tasks WHERE client_id = ? ORDER BY rowid`,
     )
     .all(clientId) as {
@@ -195,6 +205,7 @@ function loadTasks(db: Db, clientId: string): Task[] {
     status: Task['status'];
     priority: Task['priority'];
     due_date: string;
+    version: number;
   }[];
   const attachStmt = db.prepare(
     'SELECT url FROM task_attachments WHERE task_id = ? ORDER BY rowid',
@@ -207,6 +218,7 @@ function loadTasks(db: Db, clientId: string): Task[] {
     status: r.status,
     priority: r.priority,
     dueDate: r.due_date,
+    version: r.version,
     attachments: (attachStmt.all(r.id) as { url: string }[]).map((a) => a.url),
   }));
 }
@@ -255,6 +267,8 @@ function toClient(db: Db, row: ClientRow, access: Access): Client {
     id: row.id,
     name: row.name,
     currency: row.currency,
+    // Sent back on edit, so a save made from a stale screen can be refused.
+    version: row.version,
     // Every collection below is filled in only if its own section allows it.
     contacts: [],
     invoices: [],
@@ -323,7 +337,7 @@ function loadTeam(db: Db): Teammate[] {
 function loadFollowUps(db: Db): FollowUp[] {
   const rows = db
     .prepare(
-      `SELECT id, name, company_name, email, phone, related_client_id, reason, owner, due_date, status
+      `SELECT id, name, company_name, email, phone, related_client_id, reason, owner, due_date, status, version
          FROM follow_ups ORDER BY due_date, rowid`,
     )
     .all() as {
@@ -337,6 +351,7 @@ function loadFollowUps(db: Db): FollowUp[] {
     owner: string;
     due_date: string;
     status: FollowUp['status'];
+    version: number;
   }[];
   const logStmt = db.prepare(
     'SELECT id, date, note FROM follow_up_log WHERE follow_up_id = ? ORDER BY created_at, rowid',
@@ -352,6 +367,7 @@ function loadFollowUps(db: Db): FollowUp[] {
     owner: r.owner,
     dueDate: r.due_date,
     status: r.status,
+    version: r.version,
     log: logStmt.all(r.id) as FollowUp['log'],
   }));
 }
@@ -398,5 +414,6 @@ export function buildSnapshot(db: Db, actor: Actor): Snapshot {
       : [],
     team: actor.access.team ? loadTeam(db) : [],
     followUps: actor.access.followups ? loadFollowUps(db) : [],
+    workspace: { timezone: WORKSPACE_TIMEZONE },
   };
 }

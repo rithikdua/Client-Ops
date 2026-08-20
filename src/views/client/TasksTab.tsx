@@ -5,7 +5,7 @@ import { Avatar } from '../../ds/Avatar';
 import { Button } from '../../ds/Button';
 import { Chip } from '../../ds/Chip';
 import { TrashButton } from '../../ds/Icon';
-import { fmtDate, parseISO, TODAY } from '../../lib/dates';
+import { fmtDate, parseISO, today } from '../../lib/dates';
 import { priorityColor, taskStatusColor } from '../../lib/statusColors';
 import { useAccess } from '../../state/access';
 import { useApp } from '../../state/AppState';
@@ -27,7 +27,7 @@ export function TasksTab({ client }: { client: Client }) {
       <div className="card">
         {client.tasks.map((t, i) => {
           const done = t.status === 'Done';
-          const overdue = !done && !!t.dueDate && parseISO(t.dueDate) < TODAY;
+          const overdue = !done && !!t.dueDate && parseISO(t.dueDate) < today();
           const attachments = t.attachments ?? [];
           return (
             <div

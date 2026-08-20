@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { requireSection, requireWrite } from '../auth/permissions';
 import { newId, transact, type Db } from '../db/index';
 import { logSystemActivity } from '../domain/activity';
+import { bumpVersion } from '../domain/versions';
 import { audit } from '../domain/audit';
 import { notFound } from '../http/errors';
 import { deliverablePatchSchema, deliverableSchema } from '../http/validate';
@@ -47,6 +48,7 @@ export function deliverableRoutes(db: Db): Router {
     const input = deliverablePatchSchema.parse(req.body);
 
     transact(db, () => {
+      bumpVersion(db, 'deliverables', deliverableId, input.version);
       if (input.status !== undefined) {
         db.prepare('UPDATE deliverables SET status = ? WHERE id = ?').run(input.status, deliverableId);
         if (input.status !== existing.status) {

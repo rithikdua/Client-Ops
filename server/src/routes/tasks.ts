@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { requireSection, requireWrite } from '../auth/permissions';
 import { newId, transact, type Db } from '../db/index';
 import { logSystemActivity } from '../domain/activity';
+import { bumpVersion } from '../domain/versions';
 import { audit } from '../domain/audit';
 import { notFound } from '../http/errors';
 import { taskPatchSchema, taskSchema } from '../http/validate';
@@ -70,6 +71,8 @@ export function taskRoutes(db: Db): Router {
     }
 
     transact(db, () => {
+      // First, so a stale write is refused before anything is changed.
+      bumpVersion(db, 'tasks', taskId, input.version);
       if (Object.keys(columns).length > 0) {
         const assignments = Object.keys(columns)
           .map((c) => `${c} = @${c}`)

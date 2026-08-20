@@ -82,6 +82,9 @@ CREATE TABLE IF NOT EXISTS clients (
   mandate_type         TEXT,
   mandate_other        TEXT,
   scope_of_work        TEXT,
+  -- Bumped on every edit, so a stale write can be refused rather than
+  -- silently overwriting someone else's. See domain/versions.ts.
+  version              INTEGER NOT NULL DEFAULT 1,
   created_at           TEXT NOT NULL
 );
 
@@ -114,6 +117,10 @@ CREATE TABLE IF NOT EXISTS invoices (
 
 CREATE INDEX IF NOT EXISTS idx_invoices_client ON invoices(client_id);
 
+-- The unique (client_id, number) index is created in code, not here: this file
+-- runs on every open, and an existing database that already contains duplicates
+-- must still start. See ensureInvoiceNumberIndex() in db/index.ts.
+
 -- Status is never stored: it is derived from the payments below, so an invoice
 -- can never disagree with its own payment history.
 CREATE TABLE IF NOT EXISTS payments (
@@ -139,6 +146,9 @@ CREATE TABLE IF NOT EXISTS deliverables (
   status      TEXT NOT NULL CHECK (status IN ('Not started', 'In progress', 'Done')),
   file_name   TEXT,
   file_url    TEXT,
+  -- Bumped on every edit, so a stale write can be refused rather than
+  -- silently overwriting someone else's. See domain/versions.ts.
+  version              INTEGER NOT NULL DEFAULT 1,
   created_at  TEXT NOT NULL
 );
 
@@ -179,6 +189,9 @@ CREATE TABLE IF NOT EXISTS tasks (
   status      TEXT NOT NULL CHECK (status IN ('New', 'In Dev', 'Pending', 'Blocked', 'Done')),
   priority    TEXT NOT NULL CHECK (priority IN ('Highest', 'High', 'Medium', 'Low', 'Lowest')),
   due_date    TEXT NOT NULL DEFAULT '',
+  -- Bumped on every edit, so a stale write can be refused rather than
+  -- silently overwriting someone else's. See domain/versions.ts.
+  version              INTEGER NOT NULL DEFAULT 1,
   created_at  TEXT NOT NULL
 );
 
@@ -204,6 +217,9 @@ CREATE TABLE IF NOT EXISTS follow_ups (
   owner             TEXT NOT NULL DEFAULT '',
   due_date          TEXT NOT NULL,
   status            TEXT NOT NULL DEFAULT 'Pending' CHECK (status IN ('Pending', 'Done')),
+  -- Bumped on every edit, so a stale write can be refused rather than
+  -- silently overwriting someone else's. See domain/versions.ts.
+  version              INTEGER NOT NULL DEFAULT 1,
   created_at        TEXT NOT NULL
 );
 
@@ -281,3 +297,19 @@ CREATE TABLE IF NOT EXISTS audit_log (
 
 CREATE INDEX IF NOT EXISTS idx_audit_log_at ON audit_log(at);
 CREATE INDEX IF NOT EXISTS idx_audit_log_actor ON audit_log(actor_id);
+
+-- One user intent, one record. The client sends an Idempotency-Key identifying
+-- the intent; a second request carrying a key already seen is answered with the
+-- current state instead of inserting again. See http/idempotency.ts.
+CREATE TABLE IF NOT EXISTS idempotency_keys (
+  key          TEXT NOT NULL,
+  user_id      TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  endpoint     TEXT NOT NULL,
+  -- Fingerprint of the request, so reusing a key for a different intent is an
+  -- error rather than a silent no-op.
+  request_hash TEXT NOT NULL,
+  created_at   TEXT NOT NULL,
+  PRIMARY KEY (key, user_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_idempotency_created ON idempotency_keys(created_at);

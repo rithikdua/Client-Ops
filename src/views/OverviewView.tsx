@@ -1,7 +1,7 @@
 import { Avatar } from '../ds/Avatar';
 import { Chip, type ChipColor } from '../ds/Chip';
 import { MoneyTotals, PageHeader, StatCard } from '../components/ui';
-import { addDays, fmtDate, parseISO, TODAY } from '../lib/dates';
+import { addDays, fmtDate, parseISO, today } from '../lib/dates';
 import { invoiceBalance, isDeliverableOverdue, isInvoiceOverdue } from '../lib/invoices';
 import { addMoney, type MoneyByCurrency } from '../lib/money';
 import { useAccess } from '../state/access';
@@ -33,30 +33,30 @@ export function OverviewView() {
   );
   const overdueInvoiceCount = withOutstanding.reduce((a, x) => a + x.overdueInv, 0);
   const overdueDelCount = withOutstanding.reduce((a, x) => a + x.overdueDel, 0);
-  const in14 = addDays(TODAY, 14);
+  const in14 = addDays(today(), 14);
   const dueSoonCount = clients.reduce(
     (a, c) =>
       a + c.deliverables.filter((d) => d.status !== 'Done' && parseISO(d.dueDate) <= in14).length,
     0,
   );
 
-  const weekAgo = addDays(TODAY, -7);
-  const monthAgo = addDays(TODAY, -30);
-  const in30 = addDays(TODAY, 30);
+  const weekAgo = addDays(today(), -7);
+  const monthAgo = addDays(today(), -30);
+  const in30 = addDays(today(), 30);
   // Bounded at both ends: a contract starting next month has not been onboarded
   // yet, and counting it as "new this month" overstates how much work landed.
   const startedBetween = (from: Date) =>
     clients.filter((c) => {
       if (!c.startDate) return false;
       const start = parseISO(c.startDate);
-      return start >= from && start <= TODAY;
+      return start >= from && start <= today();
     }).length;
   const newThisWeek = startedBetween(weekAgo);
   const newThisMonth = startedBetween(monthAgo);
   const upcomingRenewals = clients.filter(
     (c) =>
       c.contractEndDate &&
-      parseISO(c.contractEndDate) >= TODAY &&
+      parseISO(c.contractEndDate) >= today() &&
       parseISO(c.contractEndDate) <= in30,
   ).length;
   const portfolioValue = clients.reduce<MoneyByCurrency>(
