@@ -273,6 +273,24 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
   const intentKeyRef = useRef<string | null>(null);
   const intentKey = () => (intentKeyRef.current ??= newIntentKey());
 
+  /**
+   * Orders the snapshots coming back from the server.
+   *
+   * Every mutation answers with the whole workspace, and responses do not have
+   * to arrive in the order they were sent: a refresh issued a moment ago can be
+   * overtaken by a write and land afterwards, carrying state assembled before
+   * that write existed. Applying it would silently undo what the person just
+   * did on screen — the row reappears, the note vanishes — while the server has
+   * it right, which is the worst kind of wrong: nothing to retry, and no sign
+   * anything happened.
+   *
+   * Each request takes a ticket before it leaves; a reply holding an older
+   * ticket than one already applied is dropped.
+   */
+  const requestSeqRef = useRef(0);
+  const appliedSeqRef = useRef(0);
+  const nextRequestSeq = () => ++requestSeqRef.current;
+
   const patch = useCallback(
     (updater: Partial<AppStateShape> | ((s: AppStateShape) => Partial<AppStateShape>)) => {
       setState((s) => ({ ...s, ...(typeof updater === 'function' ? updater(s) : updater) }));
@@ -285,7 +303,13 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
   }, [state.modal]);
 
   const applySnapshot = useCallback(
-    (snapshot: Snapshot, extra?: Partial<AppStateShape>) => {
+    (snapshot: Snapshot, extra?: Partial<AppStateShape>, seq?: number) => {
+      // Out of order: something newer is already on screen. Dropping this is the
+      // whole point — see nextRequestSeq above.
+      if (seq !== undefined) {
+        if (seq < appliedSeqRef.current) return;
+        appliedSeqRef.current = seq;
+      }
       // Adopt the workspace's calendar before anything derived from a date is
       // recomputed, so "today" is the same day the server would name.
       setWorkspaceTimezone(snapshot.workspace?.timezone);
@@ -331,8 +355,9 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       // idempotency key is the real defence; this stops the request leaving.
       if (stateRef.current.busy) return;
       patch({ busy: true, error: null });
+      const seq = nextRequestSeq();
       try {
-        applySnapshot(await fn(), opts.onSuccess);
+        applySnapshot(await fn(), opts.onSuccess, seq);
       } catch (err) {
         if (err instanceof ApiError && err.isUnauthorized) {
           patch({ status: 'signed-out', me: null, clients: [], team: [], followUps: [], busy: false });
@@ -350,9 +375,10 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
         // refused to save and no explanation.
         if (err instanceof ApiError && err.status === 409) {
           const conflict = err.message;
+          const refreshSeq = nextRequestSeq();
           api
             .session()
-            .then((snapshot) => applySnapshot(snapshot, { busy: false, error: conflict }))
+            .then((snapshot) => applySnapshot(snapshot, { busy: false, error: conflict }, refreshSeq))
             .catch(() => {
               /* the banner already says what happened */
             });
@@ -378,11 +404,12 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       };
     }
 
+    const resumeSeq = nextRequestSeq();
     api
       .session()
       .then((snapshot) => {
         if (window.location.search) window.history.replaceState({}, '', window.location.pathname);
-        if (!cancelled) applySnapshot(snapshot);
+        if (!cancelled) applySnapshot(snapshot, undefined, resumeSeq);
       })
       .catch(async (err) => {
         if (cancelled) return;

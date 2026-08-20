@@ -303,6 +303,11 @@ where it counts:
   writer is told, their form stays open with their text intact, and the screen
   behind refreshes to show what actually changed. Requests that send no version
   keep the old behaviour, so scripts are unaffected.
+- **Responses are applied in order.** Every request takes a ticket before it
+  leaves; a reply carrying an older ticket than one already applied is dropped.
+  Without it a refresh issued a moment earlier can be overtaken by a write and
+  land afterwards, silently undoing what you just did on screen while the server
+  has it right — nothing to retry, and no sign anything happened.
 - **One intent, one record.** Every create accepts an `Idempotency-Key`
   identifying what the user is trying to do; a second request carrying a key
   already seen is answered with the current state instead of inserting again.
