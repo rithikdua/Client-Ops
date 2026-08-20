@@ -98,6 +98,13 @@ function readLaunchParams(): { resetToken: string | null; authError: string | nu
   return { resetToken: params.get('reset'), authError: params.get('authError') };
 }
 
+/** UUID where available; randomUUID needs a secure context, LAN http is not. */
+function newIntentKey(): string {
+  const c = typeof crypto !== 'undefined' ? crypto : undefined;
+  if (c?.randomUUID) return c.randomUUID();
+  return `k-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 12)}`;
+}
+
 const initialState = (): AppStateShape => ({
   me: null,
   clients: [],
@@ -255,12 +262,27 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
   const stateRef = useRef(state);
   stateRef.current = state;
 
+  /**
+   * Identifies what the user is trying to do, for as long as the modal is open.
+   *
+   * Sent as Idempotency-Key so that submitting the same form twice — a second
+   * click while the first request is still in flight, or a retry after the
+   * connection dropped — creates one record rather than two. Reset when the
+   * modal closes, so genuinely logging the same amount twice still works.
+   */
+  const intentKeyRef = useRef<string | null>(null);
+  const intentKey = () => (intentKeyRef.current ??= newIntentKey());
+
   const patch = useCallback(
     (updater: Partial<AppStateShape> | ((s: AppStateShape) => Partial<AppStateShape>)) => {
       setState((s) => ({ ...s, ...(typeof updater === 'function' ? updater(s) : updater) }));
     },
     [],
   );
+
+  useEffect(() => {
+    if (!state.modal) intentKeyRef.current = null;
+  }, [state.modal]);
 
   const applySnapshot = useCallback(
     (snapshot: Snapshot, extra?: Partial<AppStateShape>) => {
@@ -303,6 +325,11 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
         patch({ error: 'Your account is read-only, so nothing was changed.' });
         return;
       }
+      // One mutation at a time. A second click while the first is still in
+      // flight is the same intent, not a new one — and on a slow connection
+      // that is exactly what an impatient person does. The server's
+      // idempotency key is the real defence; this stops the request leaving.
+      if (stateRef.current.busy) return;
       patch({ busy: true, error: null });
       try {
         applySnapshot(await fn(), opts.onSuccess);
@@ -906,7 +933,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
                   dueDate: f.initialCommitmentDue || '',
                 };
               }
-              void run(() => api.createClient(body), { onSuccess: closed });
+              void run(() => api.createClient(body, intentKey()), { onSuccess: closed });
             }
             return;
           }
@@ -918,15 +945,18 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
               phone: f.phone ?? '',
             };
             if (modal.clientId) {
-              void run(() => api.addContact(modal.clientId!, contact), { onSuccess: closed });
+              void run(() => api.addContact(modal.clientId!, contact, intentKey()), { onSuccess: closed });
             } else {
               void run(
                 () =>
-                  api.addContactAnywhere({
-                    ...contact,
-                    clientId: f.clientId ?? '',
-                    newClientName: f.newClientName ?? '',
-                  }),
+                  api.addContactAnywhere(
+                    {
+                      ...contact,
+                      clientId: f.clientId ?? '',
+                      newClientName: f.newClientName ?? '',
+                    },
+                    intentKey(),
+                  ),
                 { onSuccess: closed },
               );
             }
@@ -935,26 +965,35 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
           case 'invoice':
             void run(
               () =>
-                api.addInvoice(modal.clientId!, {
-                  number: f.number ?? '',
-                  baseAmount: Number(f.baseAmount) || 0,
-                  gstPercent: Number(f.gstPercent) || 0,
-                  gstMode: f.gstMode === 'included' ? 'included' : 'excluded',
-                  issueDate: f.issueDate || todayISO(),
-                  dueDate: f.dueDate || todayISO(),
-                  ...fileFields(f),
-                }),
+                api.addInvoice(
+                  modal.clientId!,
+                  {
+                    number: f.number ?? '',
+                    baseAmount: Number(f.baseAmount) || 0,
+                    gstPercent: Number(f.gstPercent) || 0,
+                    gstMode: f.gstMode === 'included' ? 'included' : 'excluded',
+                    issueDate: f.issueDate || todayISO(),
+                    dueDate: f.dueDate || todayISO(),
+                    ...fileFields(f),
+                  },
+                  intentKey(),
+                ),
               { onSuccess: closed },
             );
             return;
           case 'logPayment':
             void run(
               () =>
-                api.addPayment(modal.clientId!, modal.invId!, {
-                  bankAmount: Number(f.bankAmount) || 0,
-                  tds: Number(f.tds) || 0,
-                  date: f.date || todayISO(),
-                }),
+                api.addPayment(
+                  modal.clientId!,
+                  modal.invId!,
+                  {
+                    bankAmount: Number(f.bankAmount) || 0,
+                    tds: Number(f.tds) || 0,
+                    date: f.date || todayISO(),
+                  },
+                  intentKey(),
+                ),
               { onSuccess: closed },
             );
             return;
@@ -966,14 +1005,18 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
           case 'deliverable':
             void run(
               () =>
-                api.addDeliverable(modal.clientId!, {
-                  title: f.title ?? '',
-                  description: f.description ?? '',
-                  owner: f.owner ?? '',
-                  dueDate: f.dueDate || todayISO(),
-                  status: f.status ?? 'Not started',
-                  ...fileFields(f),
-                }),
+                api.addDeliverable(
+                  modal.clientId!,
+                  {
+                    title: f.title ?? '',
+                    description: f.description ?? '',
+                    owner: f.owner ?? '',
+                    dueDate: f.dueDate || todayISO(),
+                    status: f.status ?? 'Not started',
+                    ...fileFields(f),
+                  },
+                  intentKey(),
+                ),
               { onSuccess: closed },
             );
             return;
@@ -985,17 +1028,21 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
           case 'document':
             void run(
               () =>
-                api.addDocument(modal.clientId!, {
-                  name: f.name ?? '',
-                  type: f.type ?? 'Other',
-                  url: f.fileUrl ?? '',
-                  source: f.source === 'client' ? 'client' : 'us',
-                }),
+                api.addDocument(
+                  modal.clientId!,
+                  {
+                    name: f.name ?? '',
+                    type: f.type ?? 'Other',
+                    url: f.fileUrl ?? '',
+                    source: f.source === 'client' ? 'client' : 'us',
+                  },
+                  intentKey(),
+                ),
               { onSuccess: closed },
             );
             return;
           case 'activity':
-            void run(() => api.addActivity(modal.clientId!, { note: f.note ?? '' }), {
+            void run(() => api.addActivity(modal.clientId!, { note: f.note ?? '' }, intentKey()), {
               onSuccess: closed,
             });
             return;
@@ -1013,7 +1060,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
               () =>
                 modal.editing
                   ? api.updateTask(modal.clientId!, modal.taskId!, body)
-                  : api.addTask(modal.clientId!, body),
+                  : api.addTask(modal.clientId!, body, intentKey()),
               { onSuccess: closed },
             );
             return;
@@ -1021,14 +1068,17 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
           case 'teammate':
             void run(
               () =>
-                api.addTeammate({
-                  name: f.name ?? '',
-                  email: f.email ?? '',
-                  role: f.role ?? '',
-                  permission: f.permission ?? 'Editor',
-                  password: f.password ?? '',
-                  access: f.access ?? { ...ALL_ACCESS },
-                }),
+                api.addTeammate(
+                  {
+                    name: f.name ?? '',
+                    email: f.email ?? '',
+                    role: f.role ?? '',
+                    permission: f.permission ?? 'Editor',
+                    password: f.password ?? '',
+                    access: f.access ?? { ...ALL_ACCESS },
+                  },
+                  intentKey(),
+                ),
               { onSuccess: closed },
             );
             return;
@@ -1050,7 +1100,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
               dueDate: f.dueDate || todayISO(),
             };
             void run(
-              () => (modal.editing ? api.updateFollowUp(modal.followUpId!, body) : api.addFollowUp(body)),
+              () => (modal.editing ? api.updateFollowUp(modal.followUpId!, body) : api.addFollowUp(body, intentKey())),
               { onSuccess: closed },
             );
             return;

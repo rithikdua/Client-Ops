@@ -104,7 +104,7 @@ model working. Demo data is never loaded automatically; set `SEED_DEMO_DATA=1` i
 you want the server to load it on an empty database at boot.
 
 ```bash
-npm test           # 195 server tests (node:test)
+npm test           # 204 server tests (node:test)
 npm run typecheck  # both tsconfigs
 npm run build      # typecheck + production web build
 npm start          # production API (NODE_ENV=production)
@@ -291,6 +291,13 @@ where it counts:
   `X-Content-Type-Options: nosniff`. Per-request, per-account and per-workspace
   size limits keep one person from filling the disk, and `npm run uploads:gc`
   removes files nothing references any more.
+- **One intent, one record.** Every create accepts an `Idempotency-Key`
+  identifying what the user is trying to do; a second request carrying a key
+  already seen is answered with the current state instead of inserting again.
+  The browser mints one per open form and keeps it across retries, so a second
+  click on a slow connection — or a phone that reconnects mid-request — logs one
+  payment, not two. A failed request does not spend its key, and two identical
+  instalments are still two payments: only a repeated *key* means a repeat.
 - **One business timezone.** `WORKSPACE_TIMEZONE` (default `Asia/Kolkata`) decides
   what "today" means for the whole system, and the server sends it with every
   snapshot so the browser measures the same calendar day. Neither side asks its

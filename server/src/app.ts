@@ -4,6 +4,7 @@ import { buildActor, requireAuth, requirePasswordSettled } from './auth/permissi
 import { getSession, parseCookie, SESSION_COOKIE } from './auth/sessions';
 import type { Db } from './db/index';
 import { errorHandler, HttpError } from './http/errors';
+import { idempotency } from './http/idempotency';
 import { rejectCrossSiteWrites, securityHeaders } from './http/security';
 import { activityRoutes } from './routes/activity';
 import { authRoutes } from './routes/auth';
@@ -53,7 +54,9 @@ export function createApp(db: Db): Express {
 
   // Everything below needs a settled password as well as a session. /api/auth is
   // deliberately above this line so signing out and setting a password still work.
-  const gate = [requireAuth, requirePasswordSettled];
+  // The idempotency guard sits with them so every create is covered by one rule
+  // rather than each route remembering.
+  const gate = [requireAuth, requirePasswordSettled, idempotency(db)];
 
   app.use('/api/clients', gate, clientRoutes(db));
   app.use('/api/clients/:clientId/contacts', gate, contactRoutes(db));

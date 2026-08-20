@@ -281,3 +281,19 @@ CREATE TABLE IF NOT EXISTS audit_log (
 
 CREATE INDEX IF NOT EXISTS idx_audit_log_at ON audit_log(at);
 CREATE INDEX IF NOT EXISTS idx_audit_log_actor ON audit_log(actor_id);
+
+-- One user intent, one record. The client sends an Idempotency-Key identifying
+-- the intent; a second request carrying a key already seen is answered with the
+-- current state instead of inserting again. See http/idempotency.ts.
+CREATE TABLE IF NOT EXISTS idempotency_keys (
+  key          TEXT NOT NULL,
+  user_id      TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  endpoint     TEXT NOT NULL,
+  -- Fingerprint of the request, so reusing a key for a different intent is an
+  -- error rather than a silent no-op.
+  request_hash TEXT NOT NULL,
+  created_at   TEXT NOT NULL,
+  PRIMARY KEY (key, user_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_idempotency_created ON idempotency_keys(created_at);

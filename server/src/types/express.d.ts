@@ -9,6 +9,8 @@ declare global {
       sessionId?: string;
       /** Set by the upload guard: the section that will own the file. */
       uploadSection?: SectionKey;
+      /** Set once the idempotency guard has run, since mounts overlap. */
+      idempotencyChecked?: boolean;
     }
   }
 }

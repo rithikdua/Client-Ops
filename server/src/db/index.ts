@@ -7,7 +7,7 @@ import { fileURLToPath } from 'node:url';
 
 const here = dirname(fileURLToPath(import.meta.url));
 
-export const SCHEMA_VERSION = 6;
+export const SCHEMA_VERSION = 7;
 
 /** Absolute path to the SQLite file. Override with DATABASE_PATH. */
 export const DB_PATH = envString('DATABASE_PATH', join(here, '..', '..', 'data', 'client-ops.db'));
@@ -48,6 +48,20 @@ export function openDb(path: string = DB_PATH): Db {
  * existing table has to be applied here too.
  */
 function migrate(db: Db, from: number): void {
+  if (from < 7) {
+    // v7: idempotency keys, so one user intent cannot become two records.
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS idempotency_keys (
+        key          TEXT NOT NULL,
+        user_id      TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        endpoint     TEXT NOT NULL,
+        request_hash TEXT NOT NULL,
+        created_at   TEXT NOT NULL,
+        PRIMARY KEY (key, user_id)
+      );
+      CREATE INDEX IF NOT EXISTS idx_idempotency_created ON idempotency_keys(created_at);
+    `);
+  }
   if (from < 6) {
     // v6: an attachment belongs to the section it is attached to, not always to
     // `clients`. Existing rows are relabelled from whatever references them, so
