@@ -291,6 +291,12 @@ where it counts:
   `X-Content-Type-Options: nosniff`. Per-request, per-account and per-workspace
   size limits keep one person from filling the disk, and `npm run uploads:gc`
   removes files nothing references any more.
+- **Billing and cash are counted separately.** The finance summary answers two
+  questions, and says which is which: what was billed comes from invoices *issued*
+  in the period, what came in comes from payments *dated* in it. An invoice
+  raised on 31 July and paid on 10 August belongs to July's billing and to
+  August's cash — it used to be reported as July cash that was still sitting in
+  the client's account.
 - **Dates are checked against each other, not just individually.** An invoice due
   before it was issued, a contract ending before it starts, or an onboarding date
   preceding the contract are all refused — including on a patch that changes only

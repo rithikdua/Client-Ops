@@ -32,6 +32,17 @@ const PERIOD_OPTIONS: { value: InvoicePeriod; label: string }[] = [
   { value: 'custom', label: 'Custom range' },
 ];
 
+/**
+ * Which question a figure answers. Without these the panel reads as one report
+ * and is two: an invoice raised on 31 July and paid on 10 August belongs to
+ * July's billing and to August's cash.
+ */
+const basis = (text: string) => (
+  <div style={{ fontSize: 11, color: 'var(--ink-3)', marginTop: 4 }}>{text}</div>
+);
+const ISSUED = basis('invoices issued in period');
+const RECEIVED = basis('payments dated in period');
+
 interface Row {
   invoice: Invoice;
   client: Client;
@@ -51,25 +62,47 @@ export function InvoicesView() {
   // Every figure in the finance summary is kept per currency. This screen used to
   // add rupees to dollars and print the sum with a ₹ in front, which is a wrong
   // number on the screen most likely to be used for a decision.
+  //
+  // Two different questions share this panel, and they were being answered from
+  // one filter. What was *billed* is a property of the invoices issued in the
+  // period. What was *received* is a property of the payments dated in it. An
+  // invoice issued on 31 July and paid on 10 August used to report ₹1,00,000 of
+  // July cash — money that was still in the client's account all month.
+  const inPeriod = (date: string) => {
+    const day = parseISO(date);
+    if (period.start && day < period.start) return false;
+    if (period.end && day >= period.end) return false;
+    return true;
+  };
+
+  /* Billed: invoices *issued* in the period, and how much of that has come in. */
   const baseBilled: MoneyByCurrency = {};
   const gstBilled: MoneyByCurrency = {};
   const totalInvoiced: MoneyByCurrency = {};
+  const settledOnBilled: MoneyByCurrency = {};
+  /* Received: payments *dated* in the period, whenever the invoice was raised. */
   const bankReceived: MoneyByCurrency = {};
   const tdsDeducted: MoneyByCurrency = {};
-  const inPeriod: Row[] = [];
+
+  const cohort: Row[] = [];
 
   state.clients.forEach((c) =>
     c.invoices.forEach((inv) => {
-      const issueDate = parseISO(inv.issueDate);
-      if (period.start && issueDate < period.start) return;
-      if (period.end && issueDate >= period.end) return;
+      // Cash first, across every invoice — a payment received this month may
+      // belong to an invoice raised long before it.
+      for (const payment of inv.payments) {
+        if (!inPeriod(payment.date)) continue;
+        addMoney(bankReceived, c.currency, payment.bankAmount);
+        addMoney(tdsDeducted, c.currency, payment.tds);
+      }
+
+      if (!inPeriod(inv.issueDate)) return;
       addMoney(baseBilled, c.currency, inv.baseAmount ?? inv.amount);
       addMoney(gstBilled, c.currency, inv.gstAmount || 0);
       addMoney(totalInvoiced, c.currency, inv.amount);
-      addMoney(bankReceived, c.currency, invoiceBankReceived(inv));
-      addMoney(tdsDeducted, c.currency, invoiceTdsDeducted(inv));
+      addMoney(settledOnBilled, c.currency, invoiceBankReceived(inv) + invoiceTdsDeducted(inv));
       const statusLabel = invoiceStatusLabel(inv);
-      inPeriod.push({
+      cohort.push({
         invoice: inv,
         client: c,
         currency: c.currency,
@@ -81,7 +114,7 @@ export function InvoicesView() {
     }),
   );
 
-  let rows = inPeriod;
+  let rows = cohort;
   if (state.invoiceStatusFilter !== 'all') {
     rows = rows.filter((r) => r.statusLabel === state.invoiceStatusFilter);
   }
@@ -93,19 +126,21 @@ export function InvoicesView() {
   }
   rows = rows.slice().sort((a, b) => a.sortKey.localeCompare(b.sortKey));
 
-  /** Outstanding, per currency. */
-  const pendingDue = moneyEntries(totalInvoiced).reduce<MoneyByCurrency>(
-    (acc, [code, invoiced]) =>
-      addMoney(acc, code, invoiced - (bankReceived[code] ?? 0) - (tdsDeducted[code] ?? 0)),
+  /**
+   * Still outstanding on what was billed in the period — measured against that
+   * cohort's own settlement, not against the period's cash, which may have paid
+   * off invoices from another period entirely.
+   */
+  const stillOutstanding = moneyEntries(totalInvoiced).reduce<MoneyByCurrency>(
+    (acc, [code, invoiced]) => addMoney(acc, code, invoiced - (settledOnBilled[code] ?? 0)),
     {},
   );
 
-  /** A ratio only means something inside one currency. */
+  /** A ratio only means something inside one currency, and one cohort. */
   const percentRealized = (code: CurrencyCode) => {
     const invoiced = totalInvoiced[code] ?? 0;
     if (invoiced <= 0) return 0;
-    const settled = (bankReceived[code] ?? 0) + (tdsDeducted[code] ?? 0);
-    return Math.round((settled / invoiced) * 1000) / 10;
+    return Math.round(((settledOnBilled[code] ?? 0) / invoiced) * 1000) / 10;
   };
 
   const exportCsv = () =>
@@ -137,24 +172,33 @@ export function InvoicesView() {
       />
 
       <div className="card" style={{ padding: 24, marginBottom: 16 }}>
-        <div className="card-title" style={{ marginBottom: 18 }}>
-          Finance summary
+        <div style={{ marginBottom: 18 }}>
+          <div className="card-title">Finance summary</div>
+          <div style={{ fontSize: 12, color: 'var(--ink-3)', marginTop: 4 }}>
+            What was billed is counted from the invoice date; what came in is counted from the
+            payment date.
+          </div>
         </div>
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(6,1fr)', gap: 20 }}>
-          <Metric label="Base billed" value={<MoneyTotals totals={baseBilled} />} />
-          <Metric label="GST billed" value={<MoneyTotals totals={gstBilled} />} />
-          <Metric label="Total invoiced" value={<MoneyTotals totals={totalInvoiced} />} />
+          <Metric label="Base billed" value={<MoneyTotals totals={baseBilled} />} extra={ISSUED} />
+          <Metric label="GST billed" value={<MoneyTotals totals={gstBilled} />} extra={ISSUED} />
+          <Metric
+            label="Total invoiced"
+            value={<MoneyTotals totals={totalInvoiced} />}
+            extra={ISSUED}
+          />
           <Metric
             label="Bank cash received"
             value={<MoneyTotals totals={bankReceived} color="var(--success)" />}
             valueColor="var(--success)"
+            extra={RECEIVED}
           />
-          <Metric label="TDS deducted" value={<MoneyTotals totals={tdsDeducted} />} />
+          <Metric label="TDS deducted" value={<MoneyTotals totals={tdsDeducted} />} extra={RECEIVED} />
           <Metric
-            label="Pending cash due"
+            label="Still outstanding"
             value={
               <MoneyTotals
-                totals={pendingDue}
+                totals={stillOutstanding}
                 color="var(--danger)"
                 // The percentage sits with the currency it was computed from,
                 // because a settlement ratio across currencies is meaningless.
