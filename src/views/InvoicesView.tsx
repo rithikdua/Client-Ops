@@ -1,4 +1,4 @@
-import { EmptyRow, Metric, PageHeader, SearchField, Select, TableHead } from '../components/ui';
+import { EmptyRow, Metric, MoneyTotals, PageHeader, SearchField, Select, TableHead } from '../components/ui';
 import type { Client, CurrencyCode, Invoice } from '../data/types';
 import { Chip } from '../ds/Chip';
 import { Chevron } from '../ds/Icon';
@@ -13,8 +13,9 @@ import {
   paidPercent,
   paymentSettled,
 } from '../lib/invoices';
-import { fmtMoney } from '../lib/money';
+import { addMoney, fmtMoney, moneyEntries, type MoneyByCurrency } from '../lib/money';
 import { invoiceStatusColor } from '../lib/statusColors';
+import { useAccess } from '../state/access';
 import { useApp, type InvoiceStatusFilter } from '../state/AppState';
 
 const GRID = '16px 1.5fr 1.1fr 0.9fr 1fr 0.9fr 1fr';
@@ -42,15 +43,19 @@ interface Row {
 
 export function InvoicesView() {
   const { state, actions } = useApp();
+  const { canOpenClients } = useAccess();
 
   // The period filter drives the finance summary; the search and status filters
   // narrow only the list below it.
   const period = invoicePeriodRange(state.invoicePeriod, state.invoiceCustomFrom, state.invoiceCustomTo);
-  let baseBilled = 0;
-  let gstBilled = 0;
-  let totalInvoiced = 0;
-  let bankReceived = 0;
-  let tdsDeducted = 0;
+  // Every figure in the finance summary is kept per currency. This screen used to
+  // add rupees to dollars and print the sum with a ₹ in front, which is a wrong
+  // number on the screen most likely to be used for a decision.
+  const baseBilled: MoneyByCurrency = {};
+  const gstBilled: MoneyByCurrency = {};
+  const totalInvoiced: MoneyByCurrency = {};
+  const bankReceived: MoneyByCurrency = {};
+  const tdsDeducted: MoneyByCurrency = {};
   const inPeriod: Row[] = [];
 
   state.clients.forEach((c) =>
@@ -58,11 +63,11 @@ export function InvoicesView() {
       const issueDate = parseISO(inv.issueDate);
       if (period.start && issueDate < period.start) return;
       if (period.end && issueDate >= period.end) return;
-      baseBilled += inv.baseAmount ?? inv.amount;
-      gstBilled += inv.gstAmount || 0;
-      totalInvoiced += inv.amount;
-      bankReceived += invoiceBankReceived(inv);
-      tdsDeducted += invoiceTdsDeducted(inv);
+      addMoney(baseBilled, c.currency, inv.baseAmount ?? inv.amount);
+      addMoney(gstBilled, c.currency, inv.gstAmount || 0);
+      addMoney(totalInvoiced, c.currency, inv.amount);
+      addMoney(bankReceived, c.currency, invoiceBankReceived(inv));
+      addMoney(tdsDeducted, c.currency, invoiceTdsDeducted(inv));
       const statusLabel = invoiceStatusLabel(inv);
       inPeriod.push({
         invoice: inv,
@@ -88,8 +93,20 @@ export function InvoicesView() {
   }
   rows = rows.slice().sort((a, b) => a.sortKey.localeCompare(b.sortKey));
 
-  const percentRealized =
-    totalInvoiced > 0 ? Math.round(((bankReceived + tdsDeducted) / totalInvoiced) * 1000) / 10 : 0;
+  /** Outstanding, per currency. */
+  const pendingDue = moneyEntries(totalInvoiced).reduce<MoneyByCurrency>(
+    (acc, [code, invoiced]) =>
+      addMoney(acc, code, invoiced - (bankReceived[code] ?? 0) - (tdsDeducted[code] ?? 0)),
+    {},
+  );
+
+  /** A ratio only means something inside one currency. */
+  const percentRealized = (code: CurrencyCode) => {
+    const invoiced = totalInvoiced[code] ?? 0;
+    if (invoiced <= 0) return 0;
+    const settled = (bankReceived[code] ?? 0) + (tdsDeducted[code] ?? 0);
+    return Math.round((settled / invoiced) * 1000) / 10;
+  };
 
   const exportCsv = () =>
     downloadCsv(
@@ -124,20 +141,39 @@ export function InvoicesView() {
           Finance summary
         </div>
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(6,1fr)', gap: 20 }}>
-          <Metric label="Base billed" value={fmtMoney(baseBilled)} />
-          <Metric label="GST billed" value={fmtMoney(gstBilled)} />
-          <Metric label="Total invoiced" value={fmtMoney(totalInvoiced)} />
-          <Metric label="Bank cash received" value={fmtMoney(bankReceived)} valueColor="var(--success)" />
-          <Metric label="TDS deducted" value={fmtMoney(tdsDeducted)} />
+          <Metric label="Base billed" value={<MoneyTotals totals={baseBilled} />} />
+          <Metric label="GST billed" value={<MoneyTotals totals={gstBilled} />} />
+          <Metric label="Total invoiced" value={<MoneyTotals totals={totalInvoiced} />} />
+          <Metric
+            label="Bank cash received"
+            value={<MoneyTotals totals={bankReceived} color="var(--success)" />}
+            valueColor="var(--success)"
+          />
+          <Metric label="TDS deducted" value={<MoneyTotals totals={tdsDeducted} />} />
           <Metric
             label="Pending cash due"
-            value={fmtMoney(totalInvoiced - bankReceived - tdsDeducted)}
-            valueColor="var(--danger)"
-            extra={
-              <div style={{ fontSize: 12, color: 'var(--success)', marginTop: 4, fontWeight: 600 }}>
-                ↑ {percentRealized}% realized
-              </div>
+            value={
+              <MoneyTotals
+                totals={pendingDue}
+                color="var(--danger)"
+                // The percentage sits with the currency it was computed from,
+                // because a settlement ratio across currencies is meaningless.
+                perCurrency={(code) => (
+                  <span
+                    style={{
+                      display: 'block',
+                      fontSize: 12,
+                      color: 'var(--success)',
+                      marginTop: 4,
+                      fontWeight: 600,
+                    }}
+                  >
+                    ↑ {percentRealized(code)}% realized
+                  </span>
+                )}
+              />
             }
+            valueColor="var(--danger)"
           />
         </div>
       </div>
@@ -206,21 +242,23 @@ export function InvoicesView() {
                 <Chevron open={expanded} />
                 <span style={{ fontWeight: 600 }}>
                   {client.name}{' '}
-                  <span
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      actions.openClientTab(client.id, 'invoices');
-                    }}
-                    style={{
-                      fontSize: 11,
-                      color: 'var(--ink-3)',
-                      fontWeight: 500,
-                      textDecoration: 'underline',
-                      marginLeft: 4,
-                    }}
-                  >
-                    open
-                  </span>
+                  {canOpenClients && (
+                    <span
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        actions.openClientTab(client.id, 'invoices');
+                      }}
+                      style={{
+                        fontSize: 11,
+                        color: 'var(--ink-3)',
+                        fontWeight: 500,
+                        textDecoration: 'underline',
+                        marginLeft: 4,
+                      }}
+                    >
+                      open
+                    </span>
+                  )}
                 </span>
                 <span style={{ fontFamily: 'var(--font-mono)' }}>{inv.number}</span>
                 <span>{fmtMoney(inv.amount, currency)}</span>

@@ -1,11 +1,14 @@
 import { createApp } from './app';
 import { needsSetup } from './auth/accounts';
+import { envFlag, envNumber, envString } from './config';
 import { DB_PATH, openDb } from './db/index';
 import { seedDemoWorkspace } from './db/seed';
 
-const PORT = Number(process.env.PORT ?? 8787);
+// A blank PORT= in a copied .env used to resolve to 0, which listens on a
+// random free port and looks like the server never started.
+const PORT = envNumber('PORT', 8787, { min: 1, max: 65535 });
 /** Demo data is opt-in; a real deployment starts empty. */
-const WANT_DEMO_DATA = /^(1|true|yes)$/i.test(process.env.SEED_DEMO_DATA ?? '');
+const WANT_DEMO_DATA = envFlag('SEED_DEMO_DATA');
 
 const db = openDb();
 if (WANT_DEMO_DATA) seedDemoWorkspace(db);
@@ -23,7 +26,7 @@ const server = app.listen(PORT, () => {
   } else if (WANT_DEMO_DATA) {
     console.log(
       `[client-ops] demo workspace loaded — sign in as priya@phot.ai with the password "${
-        process.env.SEED_PASSWORD ?? 'demo1234'
+        envString('SEED_PASSWORD', 'demo1234')
       }"`,
     );
   }

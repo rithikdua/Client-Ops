@@ -1,24 +1,26 @@
 import { randomUUID } from 'node:crypto';
 import { existsSync, mkdirSync, unlinkSync, writeFileSync } from 'node:fs';
 import { basename, join } from 'node:path';
-import { Router } from 'express';
+import { Router, type NextFunction, type Request, type Response } from 'express';
 import multer from 'multer';
 import type { SectionKey } from '../../../src/data/types';
 import { requireAuth, requireWrite } from '../auth/permissions';
+import { envNumber, envString } from '../config';
 import { newId, transact, type Db } from '../db/index';
 import { ALLOWED_SUMMARY, detectType } from '../domain/fileTypes';
 import { HttpError, notFound } from '../http/errors';
 
 const MB = 1024 * 1024;
 
-const MAX_UPLOAD_BYTES = Number(process.env.MAX_UPLOAD_BYTES ?? 10 * MB);
+// One megabyte is the floor: a limit small enough to reject everything is a
+// configuration mistake, and 0 was what a blank value used to produce.
+const MAX_UPLOAD_BYTES = envNumber('MAX_UPLOAD_BYTES', 10 * MB, { min: MB });
 /** Ceiling on what one account can accumulate, not just one request. */
-const MAX_BYTES_PER_USER = Number(process.env.MAX_UPLOAD_BYTES_PER_USER ?? 200 * MB);
+const MAX_BYTES_PER_USER = envNumber('MAX_UPLOAD_BYTES_PER_USER', 200 * MB, { min: MB });
 /** Ceiling for the whole workspace, so one team cannot fill the disk. */
-const MAX_BYTES_TOTAL = Number(process.env.MAX_UPLOAD_BYTES_TOTAL ?? 2048 * MB);
+const MAX_BYTES_TOTAL = envNumber('MAX_UPLOAD_BYTES_TOTAL', 2048 * MB, { min: MB });
 
-export const UPLOAD_DIR =
-  process.env.UPLOAD_DIR ?? join(process.cwd(), 'server', 'data', 'uploads');
+export const UPLOAD_DIR = envString('UPLOAD_DIR', join(process.cwd(), 'server', 'data', 'uploads'));
 
 export interface UploadRow {
   id: string;
@@ -38,6 +40,40 @@ function usedBytes(db: Db, column: 'uploaded_by' | null, value?: string): number
   return row.n;
 }
 
+/**
+ * Sections a file can belong to. An attachment is owned by the thing it is
+ * attached to — an invoice PDF belongs to Invoices — and that is what decides
+ * both who may upload it and who may later download it.
+ */
+export const UPLOAD_SECTIONS = ['clients', 'invoices', 'deliverables', 'documents'] as const;
+export type UploadSection = (typeof UPLOAD_SECTIONS)[number];
+
+function isUploadSection(value: string): value is UploadSection {
+  return (UPLOAD_SECTIONS as readonly string[]).includes(value);
+}
+
+/**
+ * Authorizes an upload against the section that will own the file, before a
+ * single byte of the body is read.
+ *
+ * Previously this route had no section check at all: `requireAuth` and
+ * `requireWrite` were the only guards, so anyone who could write anything could
+ * attach a file to any client id they happened to know, consuming that
+ * workspace's storage quota. And every upload was recorded as `clients`
+ * regardless of what it was attached to, which made the download check
+ * disagree with the section that owns the record — an invoices-only teammate
+ * could see an invoice and not open its own attachment.
+ */
+function requireUploadSection(req: Request, _res: Response, next: NextFunction): void {
+  const raw = (req.params as { section?: string }).section ?? 'clients';
+  if (!isUploadSection(raw)) return next(new HttpError(400, 'Unknown attachment type.'));
+  if (!req.actor!.access[raw]) {
+    return next(new HttpError(403, `You do not have access to ${raw}.`));
+  }
+  req.uploadSection = raw;
+  next();
+}
+
 export function uploadRoutes(db: Db): Router {
   if (!existsSync(UPLOAD_DIR)) mkdirSync(UPLOAD_DIR, { recursive: true });
 
@@ -50,10 +86,10 @@ export function uploadRoutes(db: Db): Router {
   const router = Router({ mergeParams: true });
 
   /**
-   * Accepts a file for a specific client. Requiring the client up front is what
-   * makes the download check possible later.
+   * Accepts a file for a specific client, under the section that will own it.
+   * Requiring both up front is what makes the download check possible later.
    */
-  router.post('/', requireAuth, requireWrite, upload.single('file'), (req, res) => {
+  const handleUpload = (req: Request, res: Response) => {
     const { clientId } = req.params as { clientId: string };
     if (!db.prepare('SELECT id FROM clients WHERE id = ?').get(clientId)) throw notFound('Client');
     if (!req.file) throw new HttpError(400, 'No file received.');
@@ -83,7 +119,7 @@ export function uploadRoutes(db: Db): Router {
     try {
       db.prepare(
         `INSERT INTO uploads (id, filename, original_name, mime, size_bytes, client_id, section, uploaded_by, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, 'clients', ?, ?)`,
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       ).run(
         newId(),
         filename,
@@ -91,6 +127,9 @@ export function uploadRoutes(db: Db): Router {
         detected.mime,
         bytes.length,
         clientId,
+        // The owning section, so the download check asks the same question the
+        // record does.
+        req.uploadSection ?? 'clients',
         req.actor!.userId,
         new Date().toISOString(),
       );
@@ -109,8 +148,15 @@ export function uploadRoutes(db: Db): Router {
       name: req.file.originalname,
       size: bytes.length,
       mime: detected.mime,
+      section: req.uploadSection ?? 'clients',
     });
-  });
+  };
+
+  const guards = [requireAuth, requireWrite, requireUploadSection];
+  // `/uploads` keeps working and means "belongs to the client record" (a task
+  // attachment); `/uploads/invoices` and friends name the owning section.
+  router.post('/', guards, upload.single('file'), handleUpload);
+  router.post('/:section', guards, upload.single('file'), handleUpload);
 
   return router;
 }

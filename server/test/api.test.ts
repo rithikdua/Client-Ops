@@ -450,10 +450,11 @@ describe('uploads are owned, content-checked and authorized (H-03..H-05)', () =>
     body: Buffer | string,
     filename: string,
     mime: string,
+    section = '',
   ) {
     const form = new FormData();
     form.append('file', new Blob([body], { type: mime }), filename);
-    return fetch(`${base}/api/clients/${clientId}/uploads`, {
+    return fetch(`${base}/api/clients/${clientId}/uploads${section ? '/' + section : ''}`, {
       method: 'POST',
       headers: { cookie: session.cookie },
       body: form,
@@ -535,6 +536,95 @@ describe('uploads are owned, content-checked and authorized (H-03..H-05)', () =>
 
   test('uploading to a client that does not exist is refused', async () => {
     assert.equal((await send('no-such-client', owner, PNG, 'x.png', 'image/png')).status, 404);
+  });
+
+  test('uploading requires the section the file will belong to (C-03)', async () => {
+    // Write access alone was the only guard here, so anyone who could write
+    // anything could attach a file to any client id they knew — and spend that
+    // workspace's storage quota doing it.
+    const noClients = await createTeammateSession({
+      name: 'Deliverables Only Uploader',
+      email: 'deliverables-uploader@phot.ai',
+      access: { deliverables: true },
+    });
+    assert.equal(
+      (await send('c1', noClients, PNG, 'x.png', 'image/png')).status,
+      403,
+      'no Clients access, no attaching to the client record',
+    );
+    // But the section they *do* hold works.
+    assert.equal((await send('c1', noClients, PNG, 'x.png', 'image/png', 'deliverables')).status, 201);
+    // And an invented section is refused rather than defaulted.
+    assert.equal((await send('c1', owner, PNG, 'x.png', 'image/png', 'nonsense')).status, 400);
+  });
+
+  test('an attachment is downloadable by the section that owns it (H-04)', async () => {
+    // An invoice PDF belongs to Invoices. Recording every upload as `clients`
+    // meant a finance teammate could see an invoice and not open its own file.
+    const finance = await createTeammateSession({
+      name: 'Invoice Attachments',
+      email: 'invoice-attachments@phot.ai',
+      access: { invoices: true },
+    });
+    const uploaded = await send('c1', finance, '%PDF-1.7\n1 0 obj\n', 'inv.pdf', 'application/pdf', 'invoices');
+    assert.equal(uploaded.status, 201);
+    const { url, section } = (await uploaded.json()) as { url: string; section: string };
+    assert.equal(section, 'invoices');
+
+    assert.equal(
+      (await fetch(base + url, { headers: { cookie: finance.cookie } })).status,
+      200,
+      'the section that owns the file can read it',
+    );
+
+    // And it is not readable by someone holding a different section.
+    const docsOnly = await createTeammateSession({
+      name: 'Documents Only Reader',
+      email: 'documents-only-reader@phot.ai',
+      access: { documents: true },
+    });
+    assert.equal((await fetch(base + url, { headers: { cookie: docsOnly.cookie } })).status, 403);
+  });
+
+  test('existing attachments are relabelled from whatever references them (H-04)', async () => {
+    const { openDb } = await import('../src/db/index');
+    const path = join(mkdtempSync(join(tmpdir(), 'client-ops-uploads-migrate-')), 'db.sqlite');
+    const older = openDb(path);
+    // A pre-v6 database: every upload recorded as 'clients', whatever it is
+    // attached to.
+    older
+      .prepare(
+        `INSERT INTO clients (id, name, health, stage, billing_cycle, start_date, created_at)
+         VALUES ('m1', 'Migrated', 'Active', 'Live', 'Monthly', '2026-01-01', '2026-01-01T00:00:00Z')`,
+      )
+      .run();
+    older
+      .prepare(
+        `INSERT INTO invoices (id, client_id, number, amount_minor, base_amount_minor, issue_date, due_date, file_url, created_at)
+         VALUES ('mi1', 'm1', 'INV-1', 100, 100, '2026-01-01', '2026-02-01', '/api/uploads/abc.pdf', '2026-01-01T00:00:00Z')`,
+      )
+      .run();
+    for (const [id, filename] of [
+      ['u1', 'abc.pdf'],
+      ['u2', 'unreferenced.png'],
+    ]) {
+      older
+        .prepare(
+          `INSERT INTO uploads (id, filename, mime, size_bytes, client_id, section, created_at)
+           VALUES (?, ?, 'application/pdf', 10, 'm1', 'clients', '2026-01-01T00:00:00Z')`,
+        )
+        .run(id, filename);
+    }
+    older.prepare('UPDATE schema_version SET version = 5').run();
+    older.close();
+
+    const upgraded = openDb(path);
+    const sectionOf = (id: string) =>
+      (upgraded.prepare('SELECT section FROM uploads WHERE id = ?').get(id) as { section: string })
+        .section;
+    assert.equal(sectionOf('u1'), 'invoices', 'the invoice PDF now follows Invoices access');
+    assert.equal(sectionOf('u2'), 'clients', 'nothing references this one; leave it alone');
+    upgraded.close();
   });
 
   test('orphaned files are collected once nothing references them', async () => {
@@ -940,6 +1030,129 @@ describe('the snapshot withholds every denied section, not just money (C-03)', (
     }
     assert.deepEqual(res.body.team, [], 'team denied');
     assert.deepEqual(res.body.followUps, [], 'follow-ups denied');
+  });
+});
+
+describe('the client projection widens with access, and only with access', () => {
+  /** Fields that belong to the client detail screen and nowhere else. */
+  const CONFIDENTIAL = [
+    'gstin',
+    'legalName',
+    'notes',
+    'scopeOfWork',
+    'website',
+    'natureOfBusiness',
+    'cityTier',
+    'mandateType',
+    'mandateOther',
+    'paymentTerms',
+    'onboardingDate',
+  ];
+  const ROSTER = ['industry', 'health', 'owner', 'stage', 'billingCycle', 'startDate'];
+
+  async function userWith(sections: string[], label: string) {
+    const access: Record<string, boolean> = {};
+    for (const s of ['overview', 'clients', 'invoices', 'deliverables', 'documents', 'team', 'followups', 'phonebook'])
+      access[s] = sections.includes(s);
+    return createTeammateSession({ name: label, email: `${label}@phot.ai`, access });
+  }
+
+  before(async () => {
+    // The fixture ships these blank, and a test that asserts the absence of an
+    // empty string proves nothing.
+    const res = await call('PATCH', '/api/clients/c1', {
+      session: owner,
+      body: {
+        gstin: '27AABCU9603R1ZM',
+        legalName: 'Northwind Logistics Pvt Ltd',
+        notes: 'CFO unhappy about the Q3 overage; renewal at risk.',
+        scopeOfWork: 'Retainer: 40 assets/mo, 2 revisions',
+        website: 'https://northwind.example',
+        contractEndDate: '2027-02-10',
+      },
+    });
+    assert.equal(res.status, 200, 'fixture setup failed');
+  });
+
+  test('an Overview-only user gets the roster and none of the confidential record (C-01)', async () => {
+    const session = await userWith(['overview'], 'projection-overview');
+    const client = (await call('GET', '/api/auth/session', { session })).body.clients.find(
+      (c: any) => c.id === 'c1',
+    );
+
+    // The dashboard's own statistics need these.
+    for (const field of ROSTER) {
+      assert.ok(field in client, `the dashboard needs ${field}`);
+    }
+    assert.ok('contractEndDate' in client, 'renewals are counted from this');
+
+    // None of this is dashboard data, and it used to be in the payload.
+    for (const field of CONFIDENTIAL) {
+      assert.equal(field in client, false, `${field} must not reach an Overview-only user`);
+    }
+  });
+
+  test('an invoices-only user can actually see invoices (C-02)', async () => {
+    const session = await userWith(['invoices'], 'projection-invoices');
+    const body = (await call('GET', '/api/auth/session', { session })).body;
+
+    // Previously: zero clients, therefore zero invoices, on a screen the user was
+    // explicitly granted.
+    assert.ok(body.clients.length > 0, 'the invoices screen needs its rows');
+    const client = body.clients.find((c: any) => c.id === 'c1');
+    assert.ok(client.invoices.length > 0);
+    // Enough identity to label and format a row, and nothing more.
+    assert.ok(client.name);
+    assert.ok(client.currency);
+    for (const field of [...ROSTER, ...CONFIDENTIAL]) {
+      assert.equal(field in client, false, `${field} is not needed to list an invoice`);
+    }
+    assert.deepEqual(client.documents, []);
+    assert.deepEqual(client.deliverables, []);
+  });
+
+  test('a deliverables-only user can actually see deliverables (C-02)', async () => {
+    const session = await userWith(['deliverables'], 'projection-deliverables');
+    const body = (await call('GET', '/api/auth/session', { session })).body;
+    assert.ok(body.clients.length > 0);
+    assert.ok(body.clients.find((c: any) => c.id === 'c1').deliverables.length > 0);
+    assert.deepEqual(body.clients.find((c: any) => c.id === 'c1').invoices, []);
+  });
+
+  test('a documents-only user can actually see documents (C-02)', async () => {
+    const session = await userWith(['documents'], 'projection-documents');
+    const body = (await call('GET', '/api/auth/session', { session })).body;
+    assert.ok(body.clients.length > 0);
+    assert.ok(body.clients.find((c: any) => c.id === 'c1').documents.length > 0);
+  });
+
+  test('a follow-ups-only user can name the account a follow-up relates to', async () => {
+    const session = await userWith(['followups'], 'projection-followups');
+    const body = (await call('GET', '/api/auth/session', { session })).body;
+    const client = body.clients.find((c: any) => c.id === 'c1');
+    assert.ok(client, 'a follow-up row shows the related client name');
+    assert.equal('notes' in client, false);
+    assert.equal('health' in client, false);
+  });
+
+  test('a user with no client-facing section receives no clients at all', async () => {
+    const session = await userWith(['team'], 'projection-team');
+    const body = (await call('GET', '/api/auth/session', { session })).body;
+    assert.deepEqual(body.clients, []);
+  });
+
+  test('Clients access still returns the whole record', async () => {
+    const session = await userWith(['clients'], 'projection-clients');
+    const client = (await call('GET', '/api/auth/session', { session })).body.clients.find(
+      (c: any) => c.id === 'c1',
+    );
+    for (const field of [...ROSTER, ...CONFIDENTIAL]) {
+      assert.ok(field in client, `${field} belongs to the client detail screen`);
+    }
+    assert.equal(client.gstin, '27AABCU9603R1ZM');
+    assert.match(client.notes, /Q3 overage/);
+    // Money is a separate grant, and this user does not have it.
+    assert.equal('contractValue' in client, false);
   });
 });
 

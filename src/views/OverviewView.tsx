@@ -1,9 +1,9 @@
 import { Avatar } from '../ds/Avatar';
 import { Chip, type ChipColor } from '../ds/Chip';
-import { PageHeader, StatCard } from '../components/ui';
+import { MoneyTotals, PageHeader, StatCard } from '../components/ui';
 import { addDays, fmtDate, parseISO, TODAY } from '../lib/dates';
 import { invoiceBalance, isDeliverableOverdue, isInvoiceOverdue } from '../lib/invoices';
-import { fmtMoney } from '../lib/money';
+import { addMoney, type MoneyByCurrency } from '../lib/money';
 import { useAccess } from '../state/access';
 import { useApp } from '../state/AppState';
 import { useFollowUpRows } from '../state/derive';
@@ -24,7 +24,13 @@ export function OverviewView() {
   const totalCount = clients.length;
   const activeCount = clients.filter((c) => c.health === 'Active').length;
   const atRiskCount = clients.filter((c) => c.health === 'At Risk').length;
-  const totalOutstanding = withOutstanding.reduce((a, x) => a + x.outstanding, 0);
+  // One bucket per currency. Adding a dollar invoice to a rupee one produces a
+  // number that means nothing, and there are no FX rates in this system to make
+  // it mean something.
+  const totalOutstanding = withOutstanding.reduce<MoneyByCurrency>(
+    (acc, x) => addMoney(acc, x.c.currency, x.outstanding),
+    {},
+  );
   const overdueInvoiceCount = withOutstanding.reduce((a, x) => a + x.overdueInv, 0);
   const overdueDelCount = withOutstanding.reduce((a, x) => a + x.overdueDel, 0);
   const in14 = addDays(TODAY, 14);
@@ -37,15 +43,26 @@ export function OverviewView() {
   const weekAgo = addDays(TODAY, -7);
   const monthAgo = addDays(TODAY, -30);
   const in30 = addDays(TODAY, 30);
-  const newThisWeek = clients.filter((c) => parseISO(c.startDate) >= weekAgo).length;
-  const newThisMonth = clients.filter((c) => parseISO(c.startDate) >= monthAgo).length;
+  // Bounded at both ends: a contract starting next month has not been onboarded
+  // yet, and counting it as "new this month" overstates how much work landed.
+  const startedBetween = (from: Date) =>
+    clients.filter((c) => {
+      if (!c.startDate) return false;
+      const start = parseISO(c.startDate);
+      return start >= from && start <= TODAY;
+    }).length;
+  const newThisWeek = startedBetween(weekAgo);
+  const newThisMonth = startedBetween(monthAgo);
   const upcomingRenewals = clients.filter(
     (c) =>
       c.contractEndDate &&
       parseISO(c.contractEndDate) >= TODAY &&
       parseISO(c.contractEndDate) <= in30,
   ).length;
-  const portfolioValue = clients.reduce((a, c) => a + (c.contractValue || 0), 0);
+  const portfolioValue = clients.reduce<MoneyByCurrency>(
+    (acc, c) => addMoney(acc, c.currency, c.contractValue || 0),
+    {},
+  );
   const onboardingCount = clients.filter((c) => c.stage === 'Onboarding').length;
 
   const needsAttention = withOutstanding.filter(
@@ -107,7 +124,7 @@ export function OverviewView() {
         {showInvoiceStats && (
           <StatCard
             label="Outstanding balance"
-            value={fmtMoney(totalOutstanding)}
+            value={<MoneyTotals totals={totalOutstanding} />}
             chip={
               <Chip color={overdueInvoiceCount > 0 ? 'red' : 'green'}>
                 {overdueInvoiceCount} overdue
@@ -132,7 +149,7 @@ export function OverviewView() {
         <StatCard label="Renewals due (30d)" value={upcomingRenewals} small />
         <StatCard label="In onboarding" value={onboardingCount} small />
         {showInvoiceStats && (
-          <StatCard label="Total portfolio value" value={fmtMoney(portfolioValue)} small />
+          <StatCard label="Total portfolio value" value={<MoneyTotals totals={portfolioValue} />} small />
         )}
       </div>
 

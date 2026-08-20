@@ -1,4 +1,5 @@
 import type { NextFunction, Request, Response } from 'express';
+import { envRaw } from '../config';
 import { HttpError } from './errors';
 
 /**
@@ -91,7 +92,7 @@ export function rejectCrossSiteWrites(req: Request, _res: Response, next: NextFu
  */
 function allowedOrigins(req: Request): Set<string> {
   const allowed = new Set<string>();
-  for (const value of [appUrl(), ...(process.env.APP_ORIGINS ?? '').split(',')]) {
+  for (const value of [appUrl(), ...(envRaw('APP_ORIGINS') ?? '').split(',')]) {
     const normalized = value ? normalizeOrigin(value.trim()) : '';
     if (normalized) allowed.add(normalized);
   }
@@ -108,7 +109,8 @@ function allowedOrigins(req: Request): Set<string> {
  * say so explicitly, because guessing a localhost origin there would be a hole.
  */
 function appUrl(): string | undefined {
-  if (process.env.APP_URL) return process.env.APP_URL;
+  const configured = envRaw('APP_URL');
+  if (configured) return configured;
   return process.env.NODE_ENV === 'production' ? undefined : 'http://localhost:5173';
 }
 
@@ -130,7 +132,7 @@ function normalizeOrigin(value: string): string {
  */
 function isHttps(req: Request): boolean {
   if (req.protocol === 'https') return true;
-  if (!process.env.TRUST_PROXY) return false;
+  if (!envRaw('TRUST_PROXY')) return false;
   const forwarded = req.get('x-forwarded-proto');
   return !!forwarded && forwarded.split(',')[0].trim() === 'https';
 }

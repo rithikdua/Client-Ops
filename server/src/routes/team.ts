@@ -3,6 +3,7 @@ import { ACCESS_SECTIONS } from '../../../src/data/options';
 import type { Access } from '../../../src/data/types';
 import { createPasswordReset, createUser, emailOf } from '../auth/accounts';
 import { loadAccess, requireSection, requireTeamAdmin, writeAccess } from '../auth/permissions';
+import { envString } from '../config';
 import { transact, type Db } from '../db/index';
 import { audit } from '../domain/audit';
 import { HttpError, notFound } from '../http/errors';
@@ -101,7 +102,7 @@ export function teamRoutes(db: Db): Router {
       targetLabel: emailOf(db, userId),
       detail: `expires ${grant.expiresAt}`,
     });
-    const base = (process.env.APP_URL ?? 'http://localhost:5173').replace(/\/+$/, '');
+    const base = envString('APP_URL', 'http://localhost:5173').replace(/\/+$/, '');
     res.status(201).json({
       resetUrl: `${base}/?reset=${encodeURIComponent(grant.token)}`,
       expiresAt: grant.expiresAt,

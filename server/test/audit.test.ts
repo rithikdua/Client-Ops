@@ -8,7 +8,7 @@ import { after, before, describe, test } from 'node:test';
 process.env.SESSION_SECRET = 'test-secret';
 
 const { createApp } = await import('../src/app');
-const { openDb } = await import('../src/db/index');
+const { openDb, SCHEMA_VERSION } = await import('../src/db/index');
 const { seedDemoWorkspace } = await import('../src/db/seed');
 const { readAudit, recordAudit } = await import('../src/domain/audit');
 
@@ -320,7 +320,7 @@ describe('H-12 audit trail', () => {
     );
     assert.equal(
       (upgraded.prepare('SELECT version FROM schema_version').get() as { version: number }).version,
-      5,
+      SCHEMA_VERSION,
     );
     // And it must be usable, not just present.
     recordAudit(upgraded, { userId: null, name: 'Script', email: '' }, { action: 'client.delete' });

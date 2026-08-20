@@ -104,7 +104,7 @@ model working. Demo data is never loaded automatically; set `SEED_DEMO_DATA=1` i
 you want the server to load it on an empty database at boot.
 
 ```bash
-npm test           # 163 server tests (node:test)
+npm test           # 188 server tests (node:test)
 npm run typecheck  # both tsconfigs
 npm run build      # typecheck + production web build
 npm start          # production API (NODE_ENV=production)
@@ -274,6 +274,13 @@ where it counts:
 - **Google accounts are linked by subject, not address.** The stable `sub` is
   stored on first use, so a later Google email change follows the same account
   rather than creating a second one.
+- **An attachment is owned by the section it is attached to.** Uploading goes to
+  `POST /api/clients/:id/uploads/:section` (`clients`, `invoices`, `deliverables`
+  or `documents`), the section is authorized *before* the body is read, and it is
+  recorded on the file so every later download asks the same question the record
+  does — a finance teammate can open an invoice's own PDF without being granted
+  the whole client record. Existing rows are relabelled on upgrade from whatever
+  references them.
 - **Uploads** are validated by their actual bytes, not the `Content-Type` the
   client supplied or the extension in its filename — both of which the client
   chooses. A claim the bytes contradict is refused rather than quietly re-labelled.
@@ -284,6 +291,14 @@ where it counts:
   `X-Content-Type-Options: nosniff`. Per-request, per-account and per-workspace
   size limits keep one person from filling the disk, and `npm run uploads:gc`
   removes files nothing references any more.
+- **Currencies are never mixed.** Cross-client roll-ups — outstanding balance,
+  portfolio value, the whole finance summary — keep one total per currency and
+  show them side by side. Nothing is converted, because there are no FX rates
+  here and inventing one would be worse than showing two numbers; a settlement
+  percentage is likewise computed inside a single currency. `fmtMoney` now
+  *requires* the currency, so the compiler refuses to render an amount without
+  saying what it is denominated in. A single-currency workspace reads exactly as
+  it did before.
 - **Invoices cannot be overpaid.** A payment larger than the outstanding balance
   is refused, so the balance can never go negative — credits and refunds would
   need their own accounting rather than an overflowing invoice.
@@ -326,6 +341,14 @@ where it counts:
   **No CSP yet**: almost every element in this app carries an inline `style`
   attribute, so a policy that actually helps needs a styling refactor rather than
   `unsafe-inline`, and that is tracked as its own change.
+- **Configuration is validated at startup, and blank means unset.** `Number('')`
+  is `0`, not a missing value, so the blank placeholders this repo's own
+  `.env.example` shipped used to set the upload limit to zero bytes and the
+  password-reset lifetime to zero milliseconds — both indistinguishable from a
+  broken feature. Every environment read now goes through `server/src/config.ts`:
+  blank and whitespace mean "use the default", an unparseable or out-of-range
+  value stops the process with a message naming the variable, and flags accept
+  only real true/false spellings.
 - All input is validated with Zod; SQL goes through prepared statements only.
 
 ## Decisions worth knowing
