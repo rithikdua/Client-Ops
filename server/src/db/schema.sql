@@ -117,6 +117,10 @@ CREATE TABLE IF NOT EXISTS invoices (
 
 CREATE INDEX IF NOT EXISTS idx_invoices_client ON invoices(client_id);
 
+-- The unique (client_id, number) index is created in code, not here: this file
+-- runs on every open, and an existing database that already contains duplicates
+-- must still start. See ensureInvoiceNumberIndex() in db/index.ts.
+
 -- Status is never stored: it is derived from the payments below, so an invoice
 -- can never disagree with its own payment history.
 CREATE TABLE IF NOT EXISTS payments (

@@ -62,7 +62,7 @@ export const loginSchema = z.object({
  */
 const version = z.number().int().min(0).optional();
 
-export const clientSchema = z.object({
+const clientFields = z.object({
   name: text(200).min(1, 'A client name is required.'),
   industry: text(200).default(''),
   owner: text(120).default(''),
@@ -100,7 +100,48 @@ export const clientSchema = z.object({
     .optional(),
 });
 
-export const clientPatchSchema = clientSchema.partial().extend({
+/**
+ * Cross-field date rules, applied to a whole client record.
+ *
+ * Each date is a real calendar day on its own (M-01), which is not the same as
+ * the set of them making sense: a contract ending before it starts, or an
+ * onboarding date before the start date, are both accepted by per-field
+ * validation and both wrong. Empty means "not set" and is never compared.
+ */
+export function checkClientDates(record: {
+  startDate?: string;
+  onboardingDate?: string;
+  contractEndDate?: string;
+}): { path: string; message: string }[] {
+  const issues: { path: string; message: string }[] = [];
+  const { startDate, onboardingDate, contractEndDate } = record;
+  if (startDate && contractEndDate && contractEndDate < startDate) {
+    issues.push({
+      path: 'contractEndDate',
+      message: 'The contract cannot end before it starts.',
+    });
+  }
+  if (startDate && onboardingDate && onboardingDate < startDate) {
+    issues.push({
+      path: 'onboardingDate',
+      message: 'Onboarding cannot be dated before the contract starts.',
+    });
+  }
+  return issues;
+}
+
+/** Create: every date rule can be checked from the payload alone. */
+export const clientSchema = clientFields.superRefine((value, ctx) => {
+  for (const issue of checkClientDates(value)) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: [issue.path], message: issue.message });
+  }
+});
+
+/**
+ * Update: a patch may carry only one of the dates, so the rules are checked in
+ * the route against the stored record rather than here.
+ */
+export const clientPatchSchema = clientFields.partial().extend({
   name: text(200).min(1).optional(),
   version,
 });
@@ -114,16 +155,24 @@ export const contactSchema = z.object({
   newClientName: text(200).optional(),
 });
 
-export const invoiceSchema = z.object({
-  number: text(60).min(1, 'An invoice number is required.'),
-  baseAmount: majorAmount,
-  gstPercent: z.number().min(0).max(100).default(0),
-  gstMode: gstMode.default('excluded'),
-  issueDate: isoDate,
-  dueDate: isoDate,
-  fileName: text(300).default(''),
-  fileUrl: linkUrl().default(''),
-});
+export const invoiceSchema = z
+  .object({
+    number: text(60).min(1, 'An invoice number is required.'),
+    baseAmount: majorAmount,
+    gstPercent: z.number().min(0).max(100).default(0),
+    gstMode: gstMode.default('excluded'),
+    issueDate: isoDate,
+    dueDate: isoDate,
+    fileName: text(300).default(''),
+    fileUrl: linkUrl().default(''),
+  })
+  // Individually valid dates can still be nonsense together: an invoice due
+  // before it was issued is overdue the moment it exists, and every ageing
+  // report built on it is wrong.
+  .refine((v) => v.dueDate >= v.issueDate, {
+    path: ['dueDate'],
+    message: 'The due date cannot be before the issue date.',
+  });
 
 export const paymentSchema = z
   .object({

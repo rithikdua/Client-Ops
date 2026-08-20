@@ -104,7 +104,7 @@ model working. Demo data is never loaded automatically; set `SEED_DEMO_DATA=1` i
 you want the server to load it on an empty database at boot.
 
 ```bash
-npm test           # 211 server tests (node:test)
+npm test           # 220 server tests (node:test)
 npm run typecheck  # both tsconfigs
 npm run build      # typecheck + production web build
 npm start          # production API (NODE_ENV=production)
@@ -291,6 +291,12 @@ where it counts:
   `X-Content-Type-Options: nosniff`. Per-request, per-account and per-workspace
   size limits keep one person from filling the disk, and `npm run uploads:gc`
   removes files nothing references any more.
+- **Dates are checked against each other, not just individually.** An invoice due
+  before it was issued, a contract ending before it starts, or an onboarding date
+  preceding the contract are all refused — including on a patch that changes only
+  one of them, which is judged against the record it would produce. Invoice
+  numbers are unique per client, in the route and in the database; a workspace
+  that already contains duplicates still starts, names them, and refuses new ones.
 - **A stale edit is refused, not silently applied.** Clients, tasks, deliverables
   and follow-ups carry a version; a save sends the version the form was opened
   with, and the server applies it only if that is still current. Otherwise the

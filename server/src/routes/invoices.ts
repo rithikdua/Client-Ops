@@ -41,6 +41,17 @@ export function invoiceRoutes(db: Db): Router {
     const { clientId } = req.params as { clientId: string };
     assertClient(db, clientId);
     const input = invoiceSchema.parse(req.body);
+
+    // An invoice number is how a payment gets matched to a bill — in the bank
+    // statement, in the client's ledger, in an email chasing it. Two invoices on
+    // one account sharing a number makes every one of those ambiguous.
+    const clash = db
+      .prepare('SELECT id FROM invoices WHERE client_id = ? AND number = ?')
+      .get(clientId, input.number);
+    if (clash) {
+      throw new HttpError(409, `This client already has an invoice numbered ${input.number}.`);
+    }
+
     const { base, gst, total } = gstBreakdown(toMinor(input.baseAmount), input.gstPercent, input.gstMode);
 
     transact(db, () => {
