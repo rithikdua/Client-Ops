@@ -104,7 +104,7 @@ model working. Demo data is never loaded automatically; set `SEED_DEMO_DATA=1` i
 you want the server to load it on an empty database at boot.
 
 ```bash
-npm test           # 231 server tests (node:test)
+npm test           # 238 server tests (node:test)
 npm run typecheck  # both tsconfigs
 npm run build      # typecheck + production web build
 npm start          # production API (NODE_ENV=production)
@@ -291,6 +291,13 @@ where it counts:
   `X-Content-Type-Options: nosniff`. Per-request, per-account and per-workspace
   size limits keep one person from filling the disk, and `npm run uploads:gc`
   removes files nothing references any more.
+- **Liveness and readiness are different questions.** `/api/health/live` checks
+  nothing on purpose — a failed liveness probe means "restart me", which is the
+  wrong answer to a read-only database. `/api/health/ready` (and `/api/health`,
+  which now means the same) actually reads a table, opens and rolls back a write
+  transaction, writes and deletes a probe file in the uploads directory, and
+  reports free disk — answering **503** with the failing check named, so a load
+  balancer stops sending traffic to a process that cannot serve it.
 - **A Content-Security-Policy the app actually runs under.** `script-src 'self'`
   with no inline or remote script, `object-src`/`base-uri` none,
   `frame-ancestors 'none'`, `form-action 'self'`, and `connect-src 'self'` so

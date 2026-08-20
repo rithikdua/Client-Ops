@@ -4,6 +4,7 @@ import { buildActor, requireAuth, requirePasswordSettled } from './auth/permissi
 import { getSession, parseCookie, SESSION_COOKIE } from './auth/sessions';
 import type { Db } from './db/index';
 import { errorHandler, HttpError } from './http/errors';
+import { healthRoutes } from './http/health';
 import { idempotency } from './http/idempotency';
 import { serveStaticApp } from './http/static';
 import { rejectCrossSiteWrites, securityHeaders } from './http/security';
@@ -43,9 +44,8 @@ export function createApp(db: Db): Express {
     next();
   });
 
-  app.get('/api/health', (_req, res) => {
-    res.json({ ok: true });
-  });
+  // Liveness and readiness are different questions; see http/health.ts.
+  app.use('/api/health', healthRoutes(db));
 
   app.use('/api/auth', authRoutes(db));
 
