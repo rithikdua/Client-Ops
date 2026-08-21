@@ -7,14 +7,12 @@ import { bumpVersion } from '../domain/versions';
 import { audit } from '../domain/audit';
 import { notFound } from '../http/errors';
 import { taskPatchSchema, taskSchema } from '../http/validate';
+import { addAttachment, clearAttachments } from '../domain/attachments';
 import { assertClient, snapshotFor } from './clients';
 
 function replaceAttachments(db: Db, taskId: string, urls: string[]): void {
-  db.prepare('DELETE FROM task_attachments WHERE task_id = ?').run(taskId);
-  const stmt = db.prepare('INSERT INTO task_attachments (id, task_id, url) VALUES (?, ?, ?)');
-  for (const url of urls) {
-    if (url.trim()) stmt.run(newId(), taskId, url.trim());
-  }
+  clearAttachments(db, { taskId });
+  for (const url of urls) addAttachment(db, { taskId }, { url });
 }
 
 export function taskRoutes(db: Db): Router {

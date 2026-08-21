@@ -124,8 +124,6 @@ CREATE TABLE IF NOT EXISTS invoices (
   gst_mode          TEXT NOT NULL DEFAULT 'excluded' CHECK (gst_mode IN ('excluded', 'included')),
   issue_date        TEXT NOT NULL,
   due_date          TEXT NOT NULL,
-  file_name         TEXT,
-  file_url          TEXT,
   created_at        TEXT NOT NULL
 );
 
@@ -159,8 +157,6 @@ CREATE TABLE IF NOT EXISTS deliverables (
   owner_user_id TEXT REFERENCES users(id) ON DELETE SET NULL,
   due_date    TEXT NOT NULL,
   status      TEXT NOT NULL CHECK (status IN ('Not started', 'In progress', 'Done')),
-  file_name   TEXT,
-  file_url    TEXT,
   -- Bumped on every edit, so a stale write can be refused rather than
   -- silently overwriting someone else's. See domain/versions.ts.
   version              INTEGER NOT NULL DEFAULT 1,
@@ -175,7 +171,7 @@ CREATE TABLE IF NOT EXISTS documents (
   name       TEXT NOT NULL,
   type       TEXT NOT NULL,
   date       TEXT NOT NULL,
-  url        TEXT,
+  -- The file itself is a row in `attachments`; a document has exactly one.
   source     TEXT NOT NULL DEFAULT 'us' CHECK (source IN ('us', 'client')),
   created_at TEXT NOT NULL
 );
@@ -213,13 +209,46 @@ CREATE TABLE IF NOT EXISTS tasks (
 
 CREATE INDEX IF NOT EXISTS idx_tasks_client ON tasks(client_id);
 
-CREATE TABLE IF NOT EXISTS task_attachments (
-  id      TEXT PRIMARY KEY,
-  task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
-  url     TEXT NOT NULL
+-- Every file or link attached to anything, in one place.
+--
+-- These used to be four unrelated columns holding URL strings — `invoices.file_url`,
+-- `deliverables.file_url`, `documents.url`, `task_attachments.url` — and the only
+-- way to ask "is this uploaded file still in use?" was to read every one of those
+-- strings and pull a filename out with a regular expression. A URL written even
+-- slightly differently (an absolute address, an escaped character, a query
+-- string) did not match, and the sweeper then deleted a file that something was
+-- still pointing at.
+--
+-- An attachment now *references* its upload, so that question is a join.
+--
+-- One column per owner rather than a (type, id) pair: it costs four nullable
+-- columns and buys real foreign keys, which is what makes deleting a deliverable
+-- take its attachment with it, in the same transaction, without any code
+-- remembering to.
+CREATE TABLE IF NOT EXISTS attachments (
+  id             TEXT PRIMARY KEY,
+  invoice_id     TEXT REFERENCES invoices(id) ON DELETE CASCADE,
+  deliverable_id TEXT REFERENCES deliverables(id) ON DELETE CASCADE,
+  document_id    TEXT REFERENCES documents(id) ON DELETE CASCADE,
+  task_id        TEXT REFERENCES tasks(id) ON DELETE CASCADE,
+  -- A file we hold, or an address somewhere else. Exactly one, never both:
+  -- a link to a Google Doc is a real attachment and has no upload behind it.
+  upload_id      TEXT REFERENCES uploads(id) ON DELETE CASCADE,
+  external_url   TEXT,
+  -- What to call it on screen. For an upload this is the name it arrived with.
+  name           TEXT NOT NULL DEFAULT '',
+  created_at     TEXT NOT NULL,
+  CHECK ((invoice_id IS NOT NULL) + (deliverable_id IS NOT NULL)
+       + (document_id IS NOT NULL) + (task_id IS NOT NULL) = 1),
+  CHECK ((upload_id IS NOT NULL) + (external_url IS NOT NULL) = 1)
 );
 
-CREATE INDEX IF NOT EXISTS idx_task_attachments_task ON task_attachments(task_id);
+CREATE INDEX IF NOT EXISTS idx_attachments_invoice ON attachments(invoice_id);
+CREATE INDEX IF NOT EXISTS idx_attachments_deliverable ON attachments(deliverable_id);
+CREATE INDEX IF NOT EXISTS idx_attachments_document ON attachments(document_id);
+CREATE INDEX IF NOT EXISTS idx_attachments_task ON attachments(task_id);
+-- The index that turns "is this upload still referenced?" into a lookup.
+CREATE INDEX IF NOT EXISTS idx_attachments_upload ON attachments(upload_id);
 
 CREATE TABLE IF NOT EXISTS follow_ups (
   id                TEXT PRIMARY KEY,

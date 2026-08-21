@@ -5,6 +5,7 @@ import { logSystemActivity, todayISO } from '../domain/activity';
 import { audit } from '../domain/audit';
 import { notFound } from '../http/errors';
 import { documentSchema } from '../http/validate';
+import { addAttachment } from '../domain/attachments';
 import { assertClient, snapshotFor } from './clients';
 
 export function documentRoutes(db: Db): Router {
@@ -16,19 +17,23 @@ export function documentRoutes(db: Db): Router {
     assertClient(db, clientId);
     const input = documentSchema.parse(req.body);
     transact(db, () => {
+      const documentId = newId();
       db.prepare(
-        `INSERT INTO documents (id, client_id, name, type, date, url, source, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO documents (id, client_id, name, type, date, source, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`,
       ).run(
-        newId(),
+        documentId,
         clientId,
         input.name,
         input.type,
         todayISO(),
-        input.url || null,
         input.source,
         new Date().toISOString(),
       );
+      // The file is the document, so it goes in as an attachment in the same
+      // transaction: a document row with no attachment, or an attachment with
+      // no document, are both states nothing should ever observe.
+      if (input.url) addAttachment(db, { documentId }, { url: input.url, name: input.name });
       logSystemActivity(db, clientId, `Document "${input.name}" added`, req.actor!.name);
     });
     res.status(201).json(snapshotFor(db, req));

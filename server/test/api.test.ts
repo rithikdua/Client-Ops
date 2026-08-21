@@ -591,7 +591,11 @@ describe('uploads are owned, content-checked and authorized (H-03..H-05)', () =>
     const path = join(mkdtempSync(join(tmpdir(), 'client-ops-uploads-migrate-')), 'db.sqlite');
     const older = openDb(path);
     // A pre-v6 database: every upload recorded as 'clients', whatever it is
-    // attached to.
+    // attached to, and an invoice carrying its file as two columns of text.
+    // Those columns have to be put back by hand — openDb builds the current
+    // schema, where an attachment is a row in `attachments` (v13).
+    older.exec('ALTER TABLE invoices ADD COLUMN file_url TEXT');
+    older.exec('ALTER TABLE invoices ADD COLUMN file_name TEXT');
     older
       .prepare(
         `INSERT INTO clients (id, name, health, stage, billing_cycle, start_date, created_at)

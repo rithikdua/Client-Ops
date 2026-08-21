@@ -7,6 +7,7 @@ import { bumpVersion } from '../domain/versions';
 import { audit } from '../domain/audit';
 import { notFound } from '../http/errors';
 import { deliverablePatchSchema, deliverableSchema } from '../http/validate';
+import { addAttachment, setAttachment } from '../domain/attachments';
 import { assertClient, snapshotFor } from './clients';
 
 export function deliverableRoutes(db: Db): Router {
@@ -20,12 +21,13 @@ export function deliverableRoutes(db: Db): Router {
     const owner = resolveAssignment(db, { userId: input.ownerUserId, name: input.owner });
 
     transact(db, () => {
+      const deliverableId = newId();
       db.prepare(
         `INSERT INTO deliverables (
-           id, client_id, title, description, owner, owner_user_id, due_date, status, file_name, file_url, created_at
-         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+           id, client_id, title, description, owner, owner_user_id, due_date, status, created_at
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       ).run(
-        newId(),
+        deliverableId,
         clientId,
         input.title,
         input.description,
@@ -33,10 +35,12 @@ export function deliverableRoutes(db: Db): Router {
         owner.userId,
         input.dueDate,
         input.status,
-        input.fileName || null,
-        input.fileUrl || null,
         new Date().toISOString(),
       );
+      // In the same transaction as the row it belongs to.
+      if (input.fileUrl) {
+        addAttachment(db, { deliverableId }, { url: input.fileUrl, name: input.fileName ?? '' });
+      }
       logSystemActivity(db, clientId, `Deliverable "${input.title}" added`, req.actor!.name);
     });
     res.status(201).json(snapshotFor(db, req));
@@ -65,11 +69,10 @@ export function deliverableRoutes(db: Db): Router {
         }
       }
       if (input.fileName !== undefined || input.fileUrl !== undefined) {
-        db.prepare('UPDATE deliverables SET file_name = ?, file_url = ? WHERE id = ?').run(
-          input.fileName || null,
-          input.fileUrl || null,
-          deliverableId,
-        );
+        setAttachment(db, { deliverableId }, {
+          url: input.fileUrl ?? '',
+          name: input.fileName ?? '',
+        });
       }
     });
 

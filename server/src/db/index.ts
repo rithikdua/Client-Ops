@@ -8,7 +8,7 @@ import { fileURLToPath } from 'node:url';
 
 const here = dirname(fileURLToPath(import.meta.url));
 
-export const SCHEMA_VERSION = 12;
+export const SCHEMA_VERSION = 13;
 
 /** Absolute path to the SQLite file. Override with DATABASE_PATH. */
 export const DB_PATH = envString('DATABASE_PATH', join(here, '..', '..', 'data', 'client-ops.db'));
@@ -87,6 +87,119 @@ function ensureInvoiceNumberIndex(db: Db): void {
  * existing table has to be applied here too.
  */
 function migrate(db: Db, from: number): void {
+  if (from < 13) {
+    // v13: attachments become a relation instead of four columns of URL text.
+    //
+    // The backfill parses those URLs one last time. That is the same regular
+    // expression whose fallibility caused the problem, but running it here is a
+    // different proposition: it happens once, on data that is all still present,
+    // and anything it fails to match is recorded as an external link rather than
+    // deleted. The old columns go afterwards so there is exactly one place an
+    // attachment lives — the mistake the name columns in v11 taught.
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS attachments (
+        id             TEXT PRIMARY KEY,
+        invoice_id     TEXT REFERENCES invoices(id) ON DELETE CASCADE,
+        deliverable_id TEXT REFERENCES deliverables(id) ON DELETE CASCADE,
+        document_id    TEXT REFERENCES documents(id) ON DELETE CASCADE,
+        task_id        TEXT REFERENCES tasks(id) ON DELETE CASCADE,
+        upload_id      TEXT REFERENCES uploads(id) ON DELETE CASCADE,
+        external_url   TEXT,
+        name           TEXT NOT NULL DEFAULT '',
+        created_at     TEXT NOT NULL,
+        CHECK ((invoice_id IS NOT NULL) + (deliverable_id IS NOT NULL)
+             + (document_id IS NOT NULL) + (task_id IS NOT NULL) = 1),
+        CHECK ((upload_id IS NOT NULL) + (external_url IS NOT NULL) = 1)
+      );
+      CREATE INDEX IF NOT EXISTS idx_attachments_invoice ON attachments(invoice_id);
+      CREATE INDEX IF NOT EXISTS idx_attachments_deliverable ON attachments(deliverable_id);
+      CREATE INDEX IF NOT EXISTS idx_attachments_document ON attachments(document_id);
+      CREATE INDEX IF NOT EXISTS idx_attachments_task ON attachments(task_id);
+      CREATE INDEX IF NOT EXISTS idx_attachments_upload ON attachments(upload_id);
+    `);
+
+    const hasColumn = (table: string, name: string) =>
+      (db.prepare(`PRAGMA table_info(${table})`).all() as { name: string }[]).some(
+        (c) => c.name === name,
+      );
+    const tableExists = (name: string) =>
+      !!db
+        .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?")
+        .get(name);
+
+    const carryOver = (
+      ownerColumn: string,
+      rows: { id: string; url: string | null; name: string | null }[],
+    ) => {
+      const insert = db.prepare(
+        `INSERT INTO attachments (id, ${ownerColumn}, upload_id, external_url, name, created_at)
+         VALUES (?, ?, ?, ?, ?, ?)`,
+      );
+      const findUpload = db.prepare('SELECT id, original_name FROM uploads WHERE filename = ?');
+      for (const row of rows) {
+        const url = (row.url ?? '').trim();
+        if (!url) continue;
+        const match = /^\/api\/uploads\/([^/?#]+)$/.exec(url);
+        const upload = match
+          ? (findUpload.get(decodeURIComponent(match[1])) as
+              | { id: string; original_name: string }
+              | undefined)
+          : undefined;
+        insert.run(
+          newId(),
+          row.id,
+          upload?.id ?? null,
+          upload ? null : url,
+          (row.name ?? '').trim() || upload?.original_name || '',
+          new Date().toISOString(),
+        );
+      }
+    };
+
+    if (hasColumn('invoices', 'file_url')) {
+      carryOver(
+        'invoice_id',
+        db
+          .prepare('SELECT id, file_url AS url, file_name AS name FROM invoices')
+          .all() as { id: string; url: string | null; name: string | null }[],
+      );
+      db.exec('ALTER TABLE invoices DROP COLUMN file_url');
+      db.exec('ALTER TABLE invoices DROP COLUMN file_name');
+    }
+    if (hasColumn('deliverables', 'file_url')) {
+      carryOver(
+        'deliverable_id',
+        db
+          .prepare('SELECT id, file_url AS url, file_name AS name FROM deliverables')
+          .all() as { id: string; url: string | null; name: string | null }[],
+      );
+      db.exec('ALTER TABLE deliverables DROP COLUMN file_url');
+      db.exec('ALTER TABLE deliverables DROP COLUMN file_name');
+    }
+    if (hasColumn('documents', 'url')) {
+      // A document's own name is the label; there is no separate file name.
+      carryOver(
+        'document_id',
+        db.prepare('SELECT id, url, name FROM documents').all() as {
+          id: string;
+          url: string | null;
+          name: string | null;
+        }[],
+      );
+      db.exec('ALTER TABLE documents DROP COLUMN url');
+    }
+    if (tableExists('task_attachments')) {
+      carryOver(
+        'task_id',
+        db.prepare('SELECT task_id AS id, url, NULL AS name FROM task_attachments').all() as {
+          id: string;
+          url: string | null;
+          name: string | null;
+        }[],
+      );
+      db.exec('DROP TABLE task_attachments');
+    }
+  }
   if (from < 12) {
     // v12: a replayed request answers with what the first one actually said,
     // so the columns to remember it in. Existing rows stay NULL and are treated
@@ -155,15 +268,24 @@ function migrate(db: Db, from: number): void {
     // `clients`. Existing rows are relabelled from whatever references them, so
     // an invoices-only teammate can open an invoice's own PDF. Filenames are
     // generated UUIDs, which makes the suffix match safe.
-    for (const [section, table, column] of [
-      ['invoices', 'invoices', 'file_url'],
-      ['deliverables', 'deliverables', 'file_url'],
-      ['documents', 'documents', 'url'],
+    //
+    // Expressed against `attachments` rather than the four URL columns this
+    // originally read: v13 runs before this block and has already moved those
+    // rows across and dropped the columns. It is also the better question —
+    // "which upload does this attachment point at" instead of a suffix match
+    // against a URL string.
+    for (const [section, column] of [
+      ['invoices', 'invoice_id'],
+      ['deliverables', 'deliverable_id'],
+      ['documents', 'document_id'],
     ] as const) {
       db.prepare(
         `UPDATE uploads SET section = ?
           WHERE section = 'clients'
-            AND EXISTS (SELECT 1 FROM ${table} WHERE ${column} LIKE '%' || uploads.filename)`,
+            AND EXISTS (
+              SELECT 1 FROM attachments
+               WHERE attachments.upload_id = uploads.id AND attachments.${column} IS NOT NULL
+            )`,
       ).run(section);
     }
   }

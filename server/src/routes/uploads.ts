@@ -16,7 +16,8 @@ import multer from 'multer';
 import type { SectionKey } from '../../../src/data/types';
 import { requireAuth, requireWrite } from '../auth/permissions';
 import { envNumber, envString } from '../config';
-import { newId, transact, type Db } from '../db/index';
+import { newId, type Db } from '../db/index';
+import { commitThenDelete, unreferencedUploads } from '../domain/attachments';
 import { ALLOWED_SUMMARY, detectType } from '../domain/fileTypes';
 import { HttpError, notFound } from '../http/errors';
 
@@ -299,58 +300,40 @@ export function uploadDownloadRoutes(db: Db): Router {
   return router;
 }
 
-/** Filenames still referenced by a task, document, invoice or deliverable. */
-function referencedFilenames(db: Db): Set<string> {
-  const referenced = new Set<string>();
-  const add = (value: string | null) => {
-    if (!value) return;
-    const match = /\/api\/uploads\/([^/?#"']+)/.exec(value);
-    if (match) referenced.add(match[1]);
-  };
-  for (const row of db.prepare('SELECT url FROM task_attachments').all() as { url: string }[]) {
-    add(row.url);
-  }
-  for (const row of db.prepare('SELECT url FROM documents').all() as { url: string | null }[]) {
-    add(row.url);
-  }
-  for (const row of db.prepare('SELECT file_url FROM invoices').all() as { file_url: string | null }[]) {
-    add(row.file_url);
-  }
-  for (const row of db.prepare('SELECT file_url FROM deliverables').all() as {
-    file_url: string | null;
-  }[]) {
-    add(row.file_url);
-  }
-  return referenced;
-}
-
 /**
  * Deletes uploads nothing points at any more — abandoned form submissions, and
  * files whose task or document has since been deleted. Left older than
  * `graceHours` so a file uploaded seconds ago, mid-form, is never swept.
+ *
+ * What counts as "points at" used to be a regular expression run over every URL
+ * string in four tables. A URL written even slightly differently did not match,
+ * and this function then deleted a file that was still in use — silently, and
+ * with no way back. It is a join now (see `domain/attachments`).
+ *
+ * The order of operations changed too. Files were unlinked *inside* the
+ * transaction, so anything that threw part-way through rolled the rows back and
+ * left the files gone: a database pointing confidently at nothing. Now the
+ * commit happens first and disk second, so the worst a failure leaves behind is
+ * a file nothing references — which is what this function is for, so the next
+ * run tidies it.
  */
 export function collectOrphanUploads(db: Db, graceHours = 24): { removed: number; bytes: number } {
-  const referenced = referencedFilenames(db);
   const cutoff = new Date(Date.now() - graceHours * 3600_000).toISOString();
-  const candidates = db
-    .prepare('SELECT id, filename, size_bytes FROM uploads WHERE created_at < ?')
-    .all(cutoff) as { id: string; filename: string; size_bytes: number }[];
+  const orphans = unreferencedUploads(db, cutoff);
 
-  let removed = 0;
   let bytes = 0;
-  transact(db, () => {
-    for (const row of candidates) {
-      if (referenced.has(row.filename)) continue;
-      try {
-        unlinkSync(join(UPLOAD_DIR, row.filename));
-      } catch {
-        /* already gone from disk; still drop the row */
-      }
+  let removed = commitThenDelete(db, () => {
+    const paths: string[] = [];
+    for (const row of orphans) {
       db.prepare('DELETE FROM uploads WHERE id = ?').run(row.id);
-      removed += 1;
+      paths.push(join(UPLOAD_DIR, row.filename));
       bytes += row.size_bytes;
     }
+    return paths;
   });
+  // `removed` counts files actually unlinked; the rows are gone either way, and
+  // a row whose file had already vanished is still an orphan collected.
+  removed = orphans.length;
 
   // Half-written uploads: a request that died between the first byte and the
   // database row leaves a .part behind that no row will ever point at, so the

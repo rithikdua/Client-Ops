@@ -7,13 +7,18 @@ import { balanceMinor, type PaymentLike } from '../domain/invoices';
 import { HttpError, notFound } from '../http/errors';
 import { fileSchema, invoiceSchema, paymentSchema, settleSchema } from '../http/validate';
 import { gstBreakdown, toMinor } from '../money';
+import {
+  addAttachment,
+  attachmentsFor,
+  clearAttachments,
+  setAttachment,
+} from '../domain/attachments';
 import { assertClient, snapshotFor } from './clients';
 
 interface InvoiceRow {
   id: string;
   number: string;
   amount_minor: number;
-  file_name: string | null;
   /** Loaded so a payment can be checked against it. */
   issue_date: string;
 }
@@ -21,7 +26,7 @@ interface InvoiceRow {
 function loadInvoice(db: Db, clientId: string, invoiceId: string): InvoiceRow {
   const row = db
     .prepare(
-      'SELECT id, number, amount_minor, file_name, issue_date FROM invoices WHERE id = ? AND client_id = ?',
+      'SELECT id, number, amount_minor, issue_date FROM invoices WHERE id = ? AND client_id = ?',
     )
     .get(invoiceId, clientId) as InvoiceRow | undefined;
   if (!row) throw notFound('Invoice');
@@ -80,13 +85,14 @@ export function invoiceRoutes(db: Db): Router {
     const { base, gst, total } = gstBreakdown(toMinor(input.baseAmount), input.gstPercent, input.gstMode);
 
     transact(db, () => {
+      const invoiceId = newId();
       db.prepare(
         `INSERT INTO invoices (
            id, client_id, number, amount_minor, base_amount_minor, gst_percent, gst_amount_minor,
-           gst_mode, issue_date, due_date, file_name, file_url, created_at
-         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+           gst_mode, issue_date, due_date, created_at
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       ).run(
-        newId(),
+        invoiceId,
         clientId,
         input.number,
         total,
@@ -96,10 +102,13 @@ export function invoiceRoutes(db: Db): Router {
         input.gstMode,
         input.issueDate,
         input.dueDate,
-        input.fileName || null,
-        input.fileUrl || null,
         new Date().toISOString(),
       );
+      // Same transaction as the invoice: an invoice whose file half-exists is a
+      // state nothing should ever read.
+      if (input.fileUrl) {
+        addAttachment(db, { invoiceId }, { url: input.fileUrl, name: input.fileName ?? '' });
+      }
       logSystemActivity(db, clientId, `Invoice ${input.number} added`, req.actor!.name);
     });
 
@@ -129,25 +138,22 @@ export function invoiceRoutes(db: Db): Router {
     const { clientId, invoiceId } = req.params as { clientId: string; invoiceId: string };
     loadInvoice(db, clientId, invoiceId);
     const input = fileSchema.parse(req.body);
-    db.prepare('UPDATE invoices SET file_name = ?, file_url = ? WHERE id = ?').run(
-      input.fileName || null,
-      input.fileUrl || null,
-      invoiceId,
-    );
+    setAttachment(db, { invoiceId }, { url: input.fileUrl ?? '', name: input.fileName ?? '' });
     res.json(snapshotFor(db, req));
   });
 
   router.delete('/:invoiceId/file', requireWrite, (req, res) => {
     const { clientId, invoiceId } = req.params as { clientId: string; invoiceId: string };
     const invoice = loadInvoice(db, clientId, invoiceId);
+    const attached = attachmentsFor(db, { invoiceId })[0];
     transact(db, () => {
-      db.prepare('UPDATE invoices SET file_name = NULL, file_url = NULL WHERE id = ?').run(invoiceId);
+      clearAttachments(db, { invoiceId });
       audit(db, req, {
         action: 'invoice.file_delete',
         targetType: 'invoice',
         targetId: invoiceId,
         targetLabel: invoice.number,
-        detail: invoice.file_name ? `removed ${invoice.file_name}` : 'removed attachment',
+        detail: attached?.name ? `removed ${attached.name}` : 'removed attachment',
       });
     });
     res.json(snapshotFor(db, req));

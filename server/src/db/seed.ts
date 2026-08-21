@@ -4,6 +4,7 @@ import { hashPassword } from '../auth/passwords';
 import { toMinor } from '../money';
 import { envString } from '../config';
 import { linkAssignmentsByName } from '../domain/assignees';
+import { addAttachment } from '../domain/attachments';
 import { newId, transact, type Db } from './index';
 import { TEAM_SEED, seedClients, seedFollowUps } from './seedData';
 
@@ -82,8 +83,8 @@ export function seedDemoWorkspace(db: Db, opts: { password?: string } = {}): voi
     const insertInvoice = db.prepare(
       `INSERT INTO invoices (
          id, client_id, number, amount_minor, base_amount_minor, gst_percent, gst_amount_minor,
-         gst_mode, issue_date, due_date, file_name, file_url, created_at
-       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, ?)`,
+         gst_mode, issue_date, due_date, created_at
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     );
     const insertPayment = db.prepare(
       `INSERT INTO payments (id, invoice_id, bank_amount_minor, tds_minor, date, created_at)
@@ -91,12 +92,12 @@ export function seedDemoWorkspace(db: Db, opts: { password?: string } = {}): voi
     );
     const insertDeliverable = db.prepare(
       `INSERT INTO deliverables (
-         id, client_id, title, description, owner, due_date, status, file_name, file_url, created_at
-       ) VALUES (?, ?, ?, ?, ?, ?, ?, NULL, NULL, ?)`,
+         id, client_id, title, description, owner, due_date, status, created_at
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
     );
     const insertDocument = db.prepare(
-      `INSERT INTO documents (id, client_id, name, type, date, url, source, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO documents (id, client_id, name, type, date, source, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
     );
     const insertActivity = db.prepare(
       `INSERT INTO activity (id, client_id, date, author, note, kind, created_at)
@@ -165,7 +166,8 @@ export function seedDemoWorkspace(db: Db, opts: { password?: string } = {}): voi
         insertDeliverable.run(d.id, c.id, d.title, d.description, d.owner, d.dueDate, d.status, now);
       }
       for (const doc of c.documents) {
-        insertDocument.run(doc.id, c.id, doc.name, doc.type, doc.date, doc.url ?? null, doc.source ?? 'us', now);
+        insertDocument.run(doc.id, c.id, doc.name, doc.type, doc.date, doc.source ?? 'us', now);
+        if (doc.url) addAttachment(db, { documentId: doc.id }, { url: doc.url, name: doc.name });
       }
       // Seeded activity is hand-written history, so it keeps kind 'note'.
       for (const a of [...c.activity].reverse()) {
@@ -210,7 +212,7 @@ export function resetDatabase(db: Db): void {
     for (const table of [
       'follow_up_log',
       'follow_ups',
-      'task_attachments',
+      'attachments',
       'tasks',
       'activity',
       'documents',

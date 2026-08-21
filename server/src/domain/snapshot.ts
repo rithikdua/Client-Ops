@@ -15,6 +15,7 @@ import type { Actor } from '../auth/permissions';
 import { loadAccess } from '../auth/permissions';
 import type { Db } from '../db/index';
 import { WORKSPACE_TIMEZONE } from './activity';
+import { loadAttachments, type Attachment } from './attachments';
 
 /**
  * The whole workspace as the current actor is allowed to see it.
@@ -104,6 +105,37 @@ interface ClientRow {
 
 const orEmpty = (v: string | null | undefined) => v ?? '';
 
+/**
+ * Every attachment on one client's rows of one kind, in a single query.
+ *
+ * Asking per row would mean a query per invoice per client — the fan-out this
+ * codebase is already trying to get rid of. The owning table is named rather
+ * than interpolated from caller input: it becomes part of a SQL string.
+ */
+function attachmentsByOwner(
+  db: Db,
+  ownerColumn: 'invoice_id' | 'deliverable_id' | 'document_id' | 'task_id',
+  clientId: string,
+  ownerTable: 'invoices' | 'deliverables' | 'documents' | 'tasks',
+): Map<string, Attachment[]> {
+  return loadAttachments(
+    db,
+    `a.${ownerColumn} IN (SELECT id FROM ${ownerTable} WHERE client_id = ?)`,
+    [clientId],
+  );
+}
+
+/**
+ * The single file an invoice, deliverable or document carries.
+ *
+ * The schema permits more than one — the table is shared with tasks, which hold
+ * a list — so this is where "at most one" is enforced for the three that only
+ * ever show one. Extra rows would be a bug elsewhere; showing the first is
+ * better than showing nothing.
+ */
+const firstFile = (list: Attachment[] | undefined) =>
+  list?.length ? { name: list[0].name, url: list[0].url } : null;
+
 /* -- per-resource loaders ------------------------------------------------ */
 
 function loadContacts(db: Db, clientId: string): Contact[] {
@@ -116,7 +148,7 @@ function loadInvoices(db: Db, clientId: string): Invoice[] {
   const rows = db
     .prepare(
       `SELECT id, number, amount_minor, base_amount_minor, gst_percent, gst_amount_minor,
-              gst_mode, issue_date, due_date, file_name, file_url
+              gst_mode, issue_date, due_date
          FROM invoices WHERE client_id = ? ORDER BY rowid`,
     )
     .all(clientId) as {
@@ -129,10 +161,9 @@ function loadInvoices(db: Db, clientId: string): Invoice[] {
     gst_mode: Invoice['gstMode'];
     issue_date: string;
     due_date: string;
-    file_name: string | null;
-    file_url: string | null;
   }[];
 
+  const files = attachmentsByOwner(db, 'invoice_id', clientId, 'invoices');
   const paymentStmt = db.prepare(
     'SELECT id, bank_amount_minor, tds_minor, date FROM payments WHERE invoice_id = ? ORDER BY date, rowid',
   );
@@ -147,7 +178,7 @@ function loadInvoices(db: Db, clientId: string): Invoice[] {
     gstMode: r.gst_mode,
     issueDate: r.issue_date,
     dueDate: r.due_date,
-    file: r.file_url || r.file_name ? { name: orEmpty(r.file_name), url: orEmpty(r.file_url) } : null,
+    file: firstFile(files.get(r.id)),
     payments: (
       paymentStmt.all(r.id) as { id: string; bank_amount_minor: number; tds_minor: number; date: string }[]
     ).map((p) => ({ id: p.id, bankAmount: p.bank_amount_minor, tds: p.tds_minor, date: p.date })),
@@ -158,7 +189,7 @@ function loadDeliverables(db: Db, clientId: string): Deliverable[] {
   const rows = db
     .prepare(
       `SELECT d.id, d.title, d.description, ${CURRENT_NAME('d', 'owner')}, d.owner_user_id,
-              d.due_date, d.status, d.file_name, d.file_url, d.version
+              d.due_date, d.status, d.version
          FROM deliverables d ${ASSIGNEE_JOIN('d', 'owner_user_id')}
         WHERE d.client_id = ? ORDER BY d.rowid`,
     )
@@ -170,10 +201,9 @@ function loadDeliverables(db: Db, clientId: string): Deliverable[] {
     owner_user_id: string | null;
     due_date: string;
     status: Deliverable['status'];
-    file_name: string | null;
-    file_url: string | null;
     version: number;
   }[];
+  const files = attachmentsByOwner(db, 'deliverable_id', clientId, 'deliverables');
   return rows.map((r) => ({
     id: r.id,
     title: r.title,
@@ -183,27 +213,27 @@ function loadDeliverables(db: Db, clientId: string): Deliverable[] {
     dueDate: r.due_date,
     status: r.status,
     version: r.version,
-    file: r.file_url || r.file_name ? { name: orEmpty(r.file_name), url: orEmpty(r.file_url) } : null,
+    file: firstFile(files.get(r.id)),
   }));
 }
 
 function loadDocuments(db: Db, clientId: string): ClientDocument[] {
   const rows = db
-    .prepare('SELECT id, name, type, date, url, source FROM documents WHERE client_id = ? ORDER BY rowid')
+    .prepare('SELECT id, name, type, date, source FROM documents WHERE client_id = ? ORDER BY rowid')
     .all(clientId) as {
     id: string;
     name: string;
     type: ClientDocument['type'];
     date: string;
-    url: string | null;
     source: 'us' | 'client';
   }[];
+  const files = attachmentsByOwner(db, 'document_id', clientId, 'documents');
   return rows.map((r) => ({
     id: r.id,
     name: r.name,
     type: r.type,
     date: r.date,
-    url: orEmpty(r.url),
+    url: firstFile(files.get(r.id))?.url ?? '',
     source: r.source,
   }));
 }
@@ -236,9 +266,7 @@ function loadTasks(db: Db, clientId: string): Task[] {
     due_date: string;
     version: number;
   }[];
-  const attachStmt = db.prepare(
-    'SELECT url FROM task_attachments WHERE task_id = ? ORDER BY rowid',
-  );
+  const files = attachmentsByOwner(db, 'task_id', clientId, 'tasks');
   return rows.map((r) => ({
     id: r.id,
     title: r.title,
@@ -249,7 +277,7 @@ function loadTasks(db: Db, clientId: string): Task[] {
     priority: r.priority,
     dueDate: r.due_date,
     version: r.version,
-    attachments: (attachStmt.all(r.id) as { url: string }[]).map((a) => a.url),
+    attachments: (files.get(r.id) ?? []).map((a) => a.url),
   }));
 }
 

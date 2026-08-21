@@ -255,6 +255,16 @@ value with the next billing countdown, outstanding balance and open deliverables
   dialog traps focus, closes on Escape and hands focus back; tabs and the
   segmented toggles are one tab stop with arrow-key movement; and the focus ring
   is drawn rather than suppressed. `npm run a11y` proves it — see below.
+- **An attachment references its upload** (`server/src/domain/attachments.ts`).
+  Files used to be four unrelated columns of URL text, and "is this file still in
+  use?" was answered by reading every one of those strings and pulling a filename
+  out with a regular expression — so a URL written slightly differently looked
+  unreferenced and the sweeper deleted a file something still pointed at. It is a
+  join now, the owner columns are real foreign keys (delete a deliverable and its
+  attachment goes in the same transaction), and links to places we do not host
+  are kept as what they are rather than discarded. Files are unlinked *after* the
+  commit, never inside it: the only thing a crash can now leave behind is a file
+  nothing references, which is exactly what the sweep is for.
 - **Activity log** merges hand-written notes with auto-logged system events
   (invoices, payments, deliverables, documents, contacts, client edits, task and
   deliverable status changes). The `system` kind is set by the server only — a
