@@ -26,6 +26,11 @@ CREATE TABLE IF NOT EXISTS users (
   -- Google's stable subject id, linked on first Google sign-in. Google may let a
   -- user change their address, so the subject is what identifies them long-term.
   google_sub    TEXT,
+  -- The address Google last reported for that subject. Kept beside the account's
+  -- own email rather than overwriting it: Google changing a profile must not
+  -- silently change who this account is for password sign-in, audit or
+  -- correspondence.
+  google_email  TEXT,
   -- Set when someone else chose this account's password. Until the owner of the
   -- account replaces it, an administrator knows their credentials.
   must_change_password INTEGER NOT NULL DEFAULT 0,

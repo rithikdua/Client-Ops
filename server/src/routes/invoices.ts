@@ -1,11 +1,11 @@
 import { Router } from 'express';
 import { requireSection, requireWrite } from '../auth/permissions';
 import { newId, transact, type Db } from '../db/index';
-import { logSystemActivity } from '../domain/activity';
+import { logSystemActivity, todayISO } from '../domain/activity';
 import { audit } from '../domain/audit';
 import { balanceMinor, type PaymentLike } from '../domain/invoices';
 import { HttpError, notFound } from '../http/errors';
-import { fileSchema, invoiceSchema, paymentSchema } from '../http/validate';
+import { fileSchema, invoiceSchema, paymentSchema, settleSchema } from '../http/validate';
 import { gstBreakdown, toMinor } from '../money';
 import { assertClient, snapshotFor } from './clients';
 
@@ -14,12 +14,14 @@ interface InvoiceRow {
   number: string;
   amount_minor: number;
   file_name: string | null;
+  /** Loaded so a payment can be checked against it. */
+  issue_date: string;
 }
 
 function loadInvoice(db: Db, clientId: string, invoiceId: string): InvoiceRow {
   const row = db
     .prepare(
-      'SELECT id, number, amount_minor, file_name FROM invoices WHERE id = ? AND client_id = ?',
+      'SELECT id, number, amount_minor, file_name, issue_date FROM invoices WHERE id = ? AND client_id = ?',
     )
     .get(invoiceId, clientId) as InvoiceRow | undefined;
   if (!row) throw notFound('Invoice');
@@ -33,6 +35,29 @@ function paymentsOf(db: Db, invoiceId: string): PaymentLike[] {
 }
 
 /** Everything here sits behind the `invoices` section — money is need-to-know. */
+/**
+ * A payment cannot predate the invoice it settles.
+ *
+ * Each date was individually valid and never compared, so a payment dated
+ * 1 August against an invoice issued on the 20th was accepted and quietly
+ * wrong: it lands in the previous month's cash, moves the collections figures
+ * for a period that was already reported, and puts the invoice's own timeline
+ * out of order. In practice it is almost always a typo — the wrong month, or
+ * last year — and refusing it is what a person would do.
+ *
+ * This workspace does not take money before raising the invoice; if that
+ * changes, an advance belongs in its own record rather than attached to an
+ * invoice that did not exist yet.
+ */
+function assertPaymentDate(invoice: { number: string; issue_date: string }, date: string): void {
+  if (date < invoice.issue_date) {
+    throw new HttpError(
+      400,
+      `A payment cannot be dated before the invoice was issued (${invoice.number} was issued on ${invoice.issue_date}).`,
+    );
+  }
+}
+
 export function invoiceRoutes(db: Db): Router {
   const router = Router({ mergeParams: true });
   router.use(requireSection('invoices'));
@@ -133,6 +158,8 @@ export function invoiceRoutes(db: Db): Router {
     const invoice = loadInvoice(db, clientId, invoiceId);
     const input = paymentSchema.parse(req.body);
 
+    assertPaymentDate(invoice, input.date);
+
     // Refuse to settle more than is owed. Allowing it produced a negative
     // balance, which is not a state the rest of the app has any meaning for —
     // credits and refunds need their own accounting, not an overflowing invoice.
@@ -165,10 +192,27 @@ export function invoiceRoutes(db: Db): Router {
     res.status(201).json(snapshotFor(db, req));
   });
 
-  /** Settles whatever is still outstanding in one entry. */
+  /**
+   * Settles whatever is still outstanding in one entry.
+   *
+   * The accounting date is explicit, defaulting to today. It used to be
+   * hardcoded to today with no way to say otherwise, which is wrong whenever the
+   * money arrived before anyone got around to recording it — an invoice settled
+   * on the 21st for a transfer that landed on the 18th belonged in the 18th's
+   * cash, and there was no way to say so.
+   *
+   * That hardcoded date was also `new Date().toISOString().slice(0, 10)` — the
+   * UTC day, not the workspace's. Between midnight and 05:30 in Asia/Kolkata it
+   * stamped yesterday, which is the exact bug M-01 fixed everywhere else and
+   * this line escaped.
+   */
   router.post('/:invoiceId/settle', requireWrite, (req, res) => {
     const { clientId, invoiceId } = req.params as { clientId: string; invoiceId: string };
     const invoice = loadInvoice(db, clientId, invoiceId);
+    const input = settleSchema.parse(req.body ?? {});
+    const date = input.date ?? todayISO();
+    assertPaymentDate(invoice, date);
+
     const balance = balanceMinor(invoice.amount_minor, paymentsOf(db, invoiceId));
     if (balance <= 0) {
       res.json(snapshotFor(db, req));
@@ -179,7 +223,7 @@ export function invoiceRoutes(db: Db): Router {
       db.prepare(
         `INSERT INTO payments (id, invoice_id, bank_amount_minor, tds_minor, date, created_at)
          VALUES (?, ?, ?, 0, ?, ?)`,
-      ).run(newId(), invoiceId, balance, new Date().toISOString().slice(0, 10), new Date().toISOString());
+      ).run(newId(), invoiceId, balance, date, new Date().toISOString());
       logSystemActivity(db, clientId, `Payment logged for invoice ${invoice.number}`, req.actor!.name);
     });
 

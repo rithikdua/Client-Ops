@@ -178,8 +178,12 @@ export function InvoicesTab({ client }: { client: Client }) {
                         <RowMenuItem onClick={() => actions.openLogPayment(client.id, inv.id, balance)}>
                           Log a payment
                         </RowMenuItem>
-                        <RowMenuItem onClick={() => actions.markInvoicePaid(client.id, inv.id)}>
-                          Mark fully paid
+                        {/* Opens the payment form with the balance and today
+                            already filled in, rather than recording a payment
+                            dated today with no chance to say otherwise: the day
+                            money arrived is a fact, not the day someone clicked. */}
+                        <RowMenuItem onClick={() => actions.markInvoicePaid(client.id, inv.id, balance)}>
+                          Mark fully paid…
                         </RowMenuItem>
                       </>
                     )}

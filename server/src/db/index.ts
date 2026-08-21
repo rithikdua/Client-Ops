@@ -7,7 +7,7 @@ import { fileURLToPath } from 'node:url';
 
 const here = dirname(fileURLToPath(import.meta.url));
 
-export const SCHEMA_VERSION = 9;
+export const SCHEMA_VERSION = 10;
 
 /** Absolute path to the SQLite file. Override with DATABASE_PATH. */
 export const DB_PATH = envString('DATABASE_PATH', join(here, '..', '..', 'data', 'client-ops.db'));
@@ -86,6 +86,14 @@ function ensureInvoiceNumberIndex(db: Db): void {
  * existing table has to be applied here too.
  */
 function migrate(db: Db, from: number): void {
+  if (from < 10) {
+    // v10: the Google address is recorded separately instead of overwriting the
+    // account's own email.
+    const columns = db.prepare('PRAGMA table_info(users)').all() as { name: string }[];
+    if (!columns.some((c) => c.name === 'google_email')) {
+      db.exec('ALTER TABLE users ADD COLUMN google_email TEXT');
+    }
+  }
   // v9 (unique invoice numbers) is applied by ensureInvoiceNumberIndex on every
   // open, since it has to be conditional on the data.
   if (from < 8) {

@@ -185,6 +185,15 @@ export const paymentSchema = z
     message: 'A payment needs a bank amount or a TDS amount.',
   });
 
+/**
+ * Settling accepts an explicit accounting date. It defaults to today, but the
+ * date money actually arrived is a fact about the world, not about when someone
+ * got around to clicking.
+ */
+export const settleSchema = z.object({
+  date: isoDate.optional(),
+});
+
 export const fileSchema = z.object({
   fileName: text(300).default(''),
   fileUrl: linkUrl().default(''),
