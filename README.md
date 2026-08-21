@@ -437,11 +437,27 @@ where it counts:
   has it right — nothing to retry, and no sign anything happened.
 - **One intent, one record.** Every create accepts an `Idempotency-Key`
   identifying what the user is trying to do; a second request carrying a key
-  already seen is answered with the current state instead of inserting again.
-  The browser mints one per open form and keeps it across retries, so a second
-  click on a slow connection — or a phone that reconnects mid-request — logs one
-  payment, not two. A failed request does not spend its key, and two identical
-  instalments are still two payments: only a repeated *key* means a repeat.
+  already seen is answered with **what the first request replied**, replayed
+  from storage rather than rebuilt. The browser mints one per open form and
+  keeps it across retries, so a second click on a slow connection — or a phone
+  that reconnects mid-request — logs one payment, not two. A failed request does
+  not spend its key, and two identical instalments are still two payments: only
+  a repeated *key* means a repeat.
+
+  Replaying the *stored* answer rather than a fresh one matters more than it
+  sounds. Two endpoints do not return workspace state at all: a password reset
+  returns a **one-time link**, and an upload returns the URL of the file. Only
+  the reset token's hash is stored, so that link exists in exactly one place —
+  the response. Rebuilding an answer for a retry destroyed it, and the only
+  recourse was to issue another link, which cancels the first. Status codes are
+  part of the answer too: a create says 201, and so does its replay, which now
+  also carries `Idempotency-Replayed: true`.
+
+  A retry that arrives while the original is still running is told to wait
+  rather than handed state assembled before the write landed. A claim left by a
+  process that died mid-request is aged out after a minute, because an intent
+  the user can never retry is a worse failure than the duplicate that rule
+  risks.
 - **One business timezone.** `WORKSPACE_TIMEZONE` (default `Asia/Kolkata`) decides
   what "today" means for the whole system, and the server sends it with every
   snapshot so the browser measures the same calendar day. Neither side asks its
@@ -608,7 +624,7 @@ Honest list, in the order I would tackle them:
 
 ## Verified
 
-`npm run typecheck`, `npm run build` and `npm test` (266 tests, one skipped
+`npm run typecheck`, `npm run build` and `npm test` (272 tests, one skipped
 because the sandbox runs as root and cannot make a directory unwritable) all
 pass, as does `npm run a11y` — axe reports **zero violations** on all fourteen
 screens and dialogs it visits, and all twenty-seven keyboard checks pass.
@@ -651,4 +667,11 @@ labels them by name, a task defaults to the signed-in person, and saving an owne
 change sent `ownerUserId` and stored both the id and the account's current name.
 The migration was also run against the pre-existing development database rather
 than only a fresh seed — all 23 assignments across clients, deliverables, tasks
-and follow-ups linked to accounts on upgrade.
+and follow-ups linked to accounts on upgrade, and the later idempotency columns
+were added to that same database on the next start.
+
+Idempotent replay was checked against a running server, not only in tests:
+issuing a password reset twice under one key returns the identical link both
+times with a 201 and `Idempotency-Replayed: true` on the second, and the
+replayed link still redeems. Before the change the second request answered with
+a workspace snapshot and the link was gone.

@@ -326,6 +326,16 @@ CREATE TABLE IF NOT EXISTS idempotency_keys (
   -- error rather than a silent no-op.
   request_hash TEXT NOT NULL,
   created_at   TEXT NOT NULL,
+  -- What the first request actually answered. A retry has to receive this, not
+  -- a freshly built approximation of it: some responses cannot be rebuilt at
+  -- all (a one-time reset link, an upload's URL), and even where they can, the
+  -- status code is part of the answer.
+  --
+  -- NULL while the first request is still in flight, which is how a second
+  -- copy arriving mid-flight is told to wait rather than served stale data.
+  status_code   INTEGER,
+  response_body TEXT,
+  completed_at  TEXT,
   PRIMARY KEY (key, user_id)
 );
 

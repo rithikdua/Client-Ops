@@ -8,7 +8,7 @@ import { fileURLToPath } from 'node:url';
 
 const here = dirname(fileURLToPath(import.meta.url));
 
-export const SCHEMA_VERSION = 11;
+export const SCHEMA_VERSION = 12;
 
 /** Absolute path to the SQLite file. Override with DATABASE_PATH. */
 export const DB_PATH = envString('DATABASE_PATH', join(here, '..', '..', 'data', 'client-ops.db'));
@@ -87,6 +87,18 @@ function ensureInvoiceNumberIndex(db: Db): void {
  * existing table has to be applied here too.
  */
 function migrate(db: Db, from: number): void {
+  if (from < 12) {
+    // v12: a replayed request answers with what the first one actually said,
+    // so the columns to remember it in. Existing rows stay NULL and are treated
+    // as never having completed — they are at most a week old and their
+    // originals are long since finished, so a retry of one is a request nobody
+    // is waiting on.
+    const columns = db.prepare('PRAGMA table_info(idempotency_keys)').all() as { name: string }[];
+    const has = (name: string) => columns.some((c) => c.name === name);
+    if (!has('status_code')) db.exec('ALTER TABLE idempotency_keys ADD COLUMN status_code INTEGER');
+    if (!has('response_body')) db.exec('ALTER TABLE idempotency_keys ADD COLUMN response_body TEXT');
+    if (!has('completed_at')) db.exec('ALTER TABLE idempotency_keys ADD COLUMN completed_at TEXT');
+  }
   if (from < 11) {
     // v11: assignments point at accounts, not at whatever the name was that day.
     for (const [table, , idColumn] of ASSIGNMENT_COLUMNS) {
