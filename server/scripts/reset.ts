@@ -22,6 +22,6 @@ db.close();
 console.log(`[client-ops] database emptied: ${DB_PATH}`);
 console.log(
   withDemo
-    ? '[client-ops] sample workspace loaded — sign in as priya@phot.ai / demo1234'
+    ? '[client-ops] sample workspace loaded — sign in as priya@phot.ai / demo-pass-2026!'
     : '[client-ops] open the app to create your account, or run: npm run create-user',
 );

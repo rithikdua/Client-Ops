@@ -115,7 +115,7 @@ describe('M-02 the server and the browser measure the same day', () => {
     const { buildSnapshot } = await import('../src/domain/snapshot');
 
     const db = openDb(':memory:');
-    seedDemoWorkspace(db, { password: 'demo1234' });
+    seedDemoWorkspace(db, { password: 'demo-pass-2026!' });
     const owner = db.prepare("SELECT id FROM users WHERE email = 'priya@phot.ai'").get() as {
       id: string;
     };

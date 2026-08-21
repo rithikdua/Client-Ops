@@ -1,13 +1,16 @@
-import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
-import { ACCESS_SECTIONS } from '../../../src/data/options';
-import type { Access, Permission } from '../../../src/data/types';
-import { newId, transact, type Db } from '../db/index';
-import { envNumber, envRaw } from '../config';
-import { HttpError } from '../http/errors';
-import { hashPassword, verifyPassword } from './passwords';
-import { writeAccess } from './permissions';
+import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
+import { ACCESS_SECTIONS } from "../../../src/data/options";
+import type { Access, Permission } from "../../../src/data/types";
+import { newId, transact, type Db } from "../db/index";
+import { envNumber, envRaw } from "../config";
+import { HttpError } from "../http/errors";
+import { assertAcceptablePassword } from "./passwordPolicy";
+import { hashPassword, verifyPassword } from "./passwords";
+import { writeAccess } from "./permissions";
 
-export const MIN_PASSWORD_LENGTH = 8;
+// The rules themselves live in passwordPolicy.ts; re-exported so existing
+// callers keep working.
+export { MIN_PASSWORD_LENGTH } from "./passwordPolicy";
 
 /**
  * Optional one-time secret that first-run setup must present. Set SETUP_TOKEN on
@@ -15,11 +18,12 @@ export const MIN_PASSWORD_LENGTH = 8;
  * first becomes the Owner.
  */
 export function setupToken(): string | null {
-  return envRaw('SETUP_TOKEN') ?? null;
+  return envRaw("SETUP_TOKEN") ?? null;
 }
 
 export function countUsers(db: Db): number {
-  return (db.prepare('SELECT COUNT(*) AS n FROM users').get() as { n: number }).n;
+  return (db.prepare("SELECT COUNT(*) AS n FROM users").get() as { n: number })
+    .n;
 }
 
 /**
@@ -27,7 +31,7 @@ export function countUsers(db: Db): number {
  * is never silently blank for an account that has already gone.
  */
 export function emailOf(db: Db, userId: string): string {
-  const row = db.prepare('SELECT email FROM users WHERE id = ?').get(userId) as
+  const row = db.prepare("SELECT email FROM users WHERE id = ?").get(userId) as
     | { email: string }
     | undefined;
   return row?.email ?? userId;
@@ -59,6 +63,14 @@ export interface NewUser {
   mustChangePassword?: boolean;
 }
 
+/** Name and email of an existing account, for the "not your own name" rule. */
+function identityOf(db: Db, userId: string): { email?: string; name?: string } {
+  const row = db
+    .prepare("SELECT name, email FROM users WHERE id = ?")
+    .get(userId) as { name: string; email: string } | undefined;
+  return { email: row?.email, name: row?.name };
+}
+
 /**
  * The single place accounts are created — first-run setup, the Team screen, the
  * CLI and the demo seeder all come through here, so the password and uniqueness
@@ -66,12 +78,13 @@ export interface NewUser {
  */
 export function createUser(db: Db, input: NewUser): string {
   const email = input.email.trim().toLowerCase();
-  if (!email.includes('@')) throw new HttpError(400, 'A valid email address is required.');
-  if (input.password.length < MIN_PASSWORD_LENGTH) {
-    throw new HttpError(400, `Passwords must be at least ${MIN_PASSWORD_LENGTH} characters.`);
-  }
-  if (db.prepare('SELECT id FROM users WHERE email = ?').get(email)) {
-    throw new HttpError(409, 'That email address is already in use.');
+  if (!email.includes("@"))
+    throw new HttpError(400, "A valid email address is required.");
+  // Checked here, at the single creation path, so setup, the Team screen, the
+  // CLI and the seeder cannot drift apart on what is acceptable.
+  assertAcceptablePassword(input.password, { email, name: input.name });
+  if (db.prepare("SELECT id FROM users WHERE email = ?").get(email)) {
+    throw new HttpError(409, "That email address is already in use.");
   }
 
   const id = newId();
@@ -86,7 +99,7 @@ export function createUser(db: Db, input: NewUser): string {
       id,
       input.name.trim(),
       email,
-      input.role?.trim() ?? '',
+      input.role?.trim() ?? "",
       input.permission,
       hash,
       salt,
@@ -94,7 +107,13 @@ export function createUser(db: Db, input: NewUser): string {
       new Date().toISOString(),
     );
     // Owners always hold every section; nobody can lock the administrator out.
-    writeAccess(db, id, input.permission === 'Owner' ? fullAccess() : (input.access ?? fullAccess()));
+    writeAccess(
+      db,
+      id,
+      input.permission === "Owner"
+        ? fullAccess()
+        : (input.access ?? fullAccess()),
+    );
   });
 
   return id;
@@ -114,19 +133,22 @@ export function changePassword(
   newPassword: string,
 ): void {
   const row = db
-    .prepare('SELECT password_hash, password_salt FROM users WHERE id = ?')
-    .get(userId) as { password_hash: string; password_salt: string } | undefined;
-  if (!row) throw new HttpError(404, 'Account not found.');
+    .prepare("SELECT password_hash, password_salt FROM users WHERE id = ?")
+    .get(userId) as
+    | { password_hash: string; password_salt: string }
+    | undefined;
+  if (!row) throw new HttpError(404, "Account not found.");
 
-  const alreadyHasPassword = row.password_hash !== '';
-  if (alreadyHasPassword && !verifyPassword(currentPassword, row.password_hash, row.password_salt)) {
-    throw new HttpError(403, 'Your current password is incorrect.');
+  const alreadyHasPassword = row.password_hash !== "";
+  if (
+    alreadyHasPassword &&
+    !verifyPassword(currentPassword, row.password_hash, row.password_salt)
+  ) {
+    throw new HttpError(403, "Your current password is incorrect.");
   }
-  if (newPassword.length < MIN_PASSWORD_LENGTH) {
-    throw new HttpError(400, `Passwords must be at least ${MIN_PASSWORD_LENGTH} characters.`);
-  }
+  assertAcceptablePassword(newPassword, identityOf(db, userId));
   if (alreadyHasPassword && newPassword === currentPassword) {
-    throw new HttpError(400, 'The new password must be different.');
+    throw new HttpError(400, "The new password must be different.");
   }
 
   setPassword(db, userId, newPassword);
@@ -145,9 +167,11 @@ export function setPassword(db: Db, userId: string, newPassword: string): void {
       `UPDATE users SET password_hash = ?, password_salt = ?, must_change_password = 0
        WHERE id = ?`,
     ).run(hash, salt, userId);
-    db.prepare('DELETE FROM sessions WHERE user_id = ?').run(userId);
+    db.prepare("DELETE FROM sessions WHERE user_id = ?").run(userId);
     // Any outstanding reset link is spent the moment a password is set.
-    db.prepare('DELETE FROM password_resets WHERE user_id = ? AND used_at IS NULL').run(userId);
+    db.prepare(
+      "DELETE FROM password_resets WHERE user_id = ? AND used_at IS NULL",
+    ).run(userId);
   });
 }
 
@@ -156,9 +180,12 @@ export function setPassword(db: Db, userId: string, newPassword: string): void {
 /** How long a reset link stays usable. */
 // A minute is the floor. Blank used to mean 0, which expired every reset link at
 // the moment it was created — indistinguishable from a broken feature.
-const RESET_TTL_MS = envNumber('PASSWORD_RESET_TTL_MS', 60 * 60_000, { min: 60_000 });
+const RESET_TTL_MS = envNumber("PASSWORD_RESET_TTL_MS", 60 * 60_000, {
+  min: 60_000,
+});
 
-const hashToken = (token: string) => createHash('sha256').update(token).digest('hex');
+const hashToken = (token: string) =>
+  createHash("sha256").update(token).digest("hex");
 
 export interface ResetGrant {
   /** The secret. Shown to the Owner once and never stored in this form. */
@@ -174,20 +201,33 @@ export interface ResetGrant {
  * only recovery path without inventing a mail dependency. Only the hash is
  * stored, so the link cannot be recovered from a database dump.
  */
-export function createPasswordReset(db: Db, userId: string, createdBy: string): ResetGrant {
-  const user = db.prepare('SELECT id FROM users WHERE id = ?').get(userId);
-  if (!user) throw new HttpError(404, 'Account not found.');
+export function createPasswordReset(
+  db: Db,
+  userId: string,
+  createdBy: string,
+): ResetGrant {
+  const user = db.prepare("SELECT id FROM users WHERE id = ?").get(userId);
+  if (!user) throw new HttpError(404, "Account not found.");
 
-  const token = randomBytes(32).toString('base64url');
+  const token = randomBytes(32).toString("base64url");
   const expiresAt = new Date(Date.now() + RESET_TTL_MS).toISOString();
 
   transact(db, () => {
     // Issuing a new link invalidates any earlier one.
-    db.prepare('DELETE FROM password_resets WHERE user_id = ? AND used_at IS NULL').run(userId);
+    db.prepare(
+      "DELETE FROM password_resets WHERE user_id = ? AND used_at IS NULL",
+    ).run(userId);
     db.prepare(
       `INSERT INTO password_resets (id, user_id, token_hash, expires_at, used_at, created_by, created_at)
        VALUES (?, ?, ?, ?, NULL, ?, ?)`,
-    ).run(newId(), userId, hashToken(token), expiresAt, createdBy, new Date().toISOString());
+    ).run(
+      newId(),
+      userId,
+      hashToken(token),
+      expiresAt,
+      createdBy,
+      new Date().toISOString(),
+    );
   });
 
   return { token, expiresAt };
@@ -205,7 +245,9 @@ function findReset(db: Db, token: string): ResetRow | null {
   if (!token) return null;
   const presented = hashToken(token);
   const row = db
-    .prepare('SELECT id, user_id, token_hash, expires_at, used_at FROM password_resets WHERE token_hash = ?')
+    .prepare(
+      "SELECT id, user_id, token_hash, expires_at, used_at FROM password_resets WHERE token_hash = ?",
+    )
     .get(presented) as ResetRow | undefined;
   if (!row) return null;
   // Belt and braces: the lookup already matched, but compare in constant time.
@@ -222,19 +264,25 @@ export function isResetTokenValid(db: Db, token: string): boolean {
 }
 
 /** Redeems a reset link and sets the new password. */
-export function redeemPasswordReset(db: Db, token: string, newPassword: string): string {
+export function redeemPasswordReset(
+  db: Db,
+  token: string,
+  newPassword: string,
+): string {
   const row = findReset(db, token);
   // One message for every failure: expired, spent and never-existed are
   // indistinguishable to whoever is holding the link.
-  const invalid = () => new HttpError(400, 'That reset link is no longer valid. Ask for a new one.');
+  const invalid = () =>
+    new HttpError(
+      400,
+      "That reset link is no longer valid. Ask for a new one.",
+    );
   if (!row || row.used_at) throw invalid();
   if (new Date(row.expires_at) <= new Date()) throw invalid();
-  if (newPassword.length < MIN_PASSWORD_LENGTH) {
-    throw new HttpError(400, `Passwords must be at least ${MIN_PASSWORD_LENGTH} characters.`);
-  }
+  assertAcceptablePassword(newPassword, identityOf(db, row.user_id));
 
   transact(db, () => {
-    db.prepare('UPDATE password_resets SET used_at = ? WHERE id = ?').run(
+    db.prepare("UPDATE password_resets SET used_at = ? WHERE id = ?").run(
       new Date().toISOString(),
       row.id,
     );
@@ -252,11 +300,17 @@ export function redeemPasswordReset(db: Db, token: string, newPassword: string):
  * see zero users and both create an Owner, which on a public deployment means a
  * stranger ends up with an administrator account alongside the real one.
  */
-export function claimFirstOwner(db: Db, input: Omit<NewUser, 'permission'>): string {
+export function claimFirstOwner(
+  db: Db,
+  input: Omit<NewUser, "permission">,
+): string {
   return transact(db, () => {
     if (countUsers(db) !== 0) {
-      throw new HttpError(409, 'This workspace already has an account. Ask an Owner to invite you.');
+      throw new HttpError(
+        409,
+        "This workspace already has an account. Ask an Owner to invite you.",
+      );
     }
-    return createUser(db, { ...input, permission: 'Owner' });
+    return createUser(db, { ...input, permission: "Owner" });
   });
 }

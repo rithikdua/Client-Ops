@@ -3,19 +3,52 @@ import { envRaw } from '../config';
 import { HttpError } from './errors';
 
 /**
+ * Content-Security-Policy.
+ *
+ * The honest version of a compromise. Nearly every element in this app carries
+ * an inline `style` attribute, so `style-src` needs `unsafe-inline` until that
+ * is refactored — but the directive that matters for stopping injected code is
+ * `script-src`, and nothing here needs inline script at all. The built page
+ * loads exactly one module from our own origin.
+ *
+ * So: no inline or remote script, no plugins, no framing, no form posts
+ * anywhere but here, and no connections off-origin. An attacker who found a way
+ * to inject markup — through a client note, a file name, an activity entry —
+ * still cannot get script to run or exfiltrate what they read.
+ *
+ *   default-src 'self'      nothing loads from anywhere else by default
+ *   script-src 'self'       no inline script, no CDN, no eval
+ *   style-src + unsafe-inline   the compromise, and the only one
+ *   img-src + data:         inline image previews of attachments
+ *   connect-src 'self'      no beaconing a copy of the workspace elsewhere
+ *   frame-ancestors 'none'  the CSP form of X-Frame-Options
+ *   form-action 'self'      a stolen form cannot post credentials away
+ *   base-uri 'none'         no rewriting where relative URLs resolve to
+ *   object-src 'none'       no Flash-era plugin surface
+ */
+const CONTENT_SECURITY_POLICY = [
+  "default-src 'self'",
+  "script-src 'self'",
+  "style-src 'self' 'unsafe-inline'",
+  "img-src 'self' data: blob:",
+  "font-src 'self' data:",
+  "connect-src 'self'",
+  "frame-ancestors 'none'",
+  "form-action 'self'",
+  "base-uri 'none'",
+  "object-src 'none'",
+].join('; ');
+
+/**
  * Response headers applied to everything this server sends. None of them are a
  * substitute for the checks in the routes — they close off the ways a browser
  * can be talked into misusing a response it was legitimately given.
- *
- * A Content-Security-Policy is deliberately not set here. Nearly every element
- * in this app carries an inline `style` attribute, so a useful policy needs
- * either `unsafe-inline` (which buys close to nothing) or a real styling
- * refactor. That is its own change, not a header added in passing.
  */
 export function securityHeaders(req: Request, res: Response, next: NextFunction): void {
   // Never let a browser guess a type other than the one we declared. Uploads set
   // this too; here it covers every JSON response as well.
   res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('Content-Security-Policy', CONTENT_SECURITY_POLICY);
   // Nothing here should be framed: it would only ever be to overlay it.
   res.setHeader('X-Frame-Options', 'DENY');
   // Reset links and upload URLs travel in the address bar. Don't leak them to

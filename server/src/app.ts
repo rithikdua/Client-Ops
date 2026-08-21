@@ -4,7 +4,9 @@ import { buildActor, requireAuth, requirePasswordSettled } from './auth/permissi
 import { getSession, parseCookie, SESSION_COOKIE } from './auth/sessions';
 import type { Db } from './db/index';
 import { errorHandler, HttpError } from './http/errors';
+import { healthRoutes } from './http/health';
 import { idempotency } from './http/idempotency';
+import { serveStaticApp } from './http/static';
 import { rejectCrossSiteWrites, securityHeaders } from './http/security';
 import { activityRoutes } from './routes/activity';
 import { authRoutes } from './routes/auth';
@@ -42,9 +44,8 @@ export function createApp(db: Db): Express {
     next();
   });
 
-  app.get('/api/health', (_req, res) => {
-    res.json({ ok: true });
-  });
+  // Liveness and readiness are different questions; see http/health.ts.
+  app.use('/api/health', healthRoutes(db));
 
   app.use('/api/auth', authRoutes(db));
 
@@ -73,6 +74,10 @@ export function createApp(db: Db): Express {
   app.use('/api', (_req, _res, next) => {
     next(new HttpError(404, 'Unknown endpoint.'));
   });
+
+  // The built front end, when there is one. Must come after the API routes so a
+  // mistyped endpoint is a 404 from the API rather than a copy of index.html.
+  serveStaticApp(app);
 
   app.use(errorHandler);
 

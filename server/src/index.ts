@@ -3,6 +3,8 @@ import { needsSetup } from './auth/accounts';
 import { envFlag, envNumber, envString } from './config';
 import { DB_PATH, openDb } from './db/index';
 import { seedDemoWorkspace } from './db/seed';
+import { claimInstance } from './ops/instance';
+import { startMaintenance } from './ops/scheduler';
 
 // A blank PORT= in a copied .env used to resolve to 0, which listens on a
 // random free port and looks like the server never started.
@@ -10,10 +12,17 @@ const PORT = envNumber('PORT', 8787, { min: 1, max: 65535 });
 /** Demo data is opt-in; a real deployment starts empty. */
 const WANT_DEMO_DATA = envFlag('SEED_DEMO_DATA');
 
+// Says so loudly if a second process is sharing this data directory: nothing
+// here is shared between instances.
+const releaseInstance = claimInstance();
+
 const db = openDb();
 if (WANT_DEMO_DATA) seedDemoWorkspace(db);
 
 const app = createApp(db);
+
+// Backups and cleanup, on a timer, because nothing else is going to run them.
+startMaintenance(db);
 
 const server = app.listen(PORT, () => {
   console.log(`[client-ops] API listening on http://localhost:${PORT}`);
@@ -26,7 +35,7 @@ const server = app.listen(PORT, () => {
   } else if (WANT_DEMO_DATA) {
     console.log(
       `[client-ops] demo workspace loaded — sign in as priya@phot.ai with the password "${
-        envString('SEED_PASSWORD', 'demo1234')
+        envString('SEED_PASSWORD', 'demo-pass-2026!')
       }"`,
     );
   }
@@ -36,6 +45,7 @@ function shutdown(signal: string) {
   console.log(`[client-ops] ${signal} received, closing.`);
   server.close(() => {
     db.close();
+    releaseInstance();
     process.exit(0);
   });
 }

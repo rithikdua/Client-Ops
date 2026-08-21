@@ -13,7 +13,7 @@ const { openDb } = await import('../src/db/index');
 const { seedDemoWorkspace } = await import('../src/db/seed');
 
 const db = openDb(':memory:');
-seedDemoWorkspace(db, { password: 'demo1234' });
+seedDemoWorkspace(db, { password: 'demo-pass-2026!' });
 const server = createApp(db).listen(0);
 const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
 
@@ -43,7 +43,7 @@ before(async () => {
   const login = await fetch(`${base}/api/auth/login`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ email: 'priya@phot.ai', password: 'demo1234' }),
+    body: JSON.stringify({ email: 'priya@phot.ai', password: 'demo-pass-2026!' }),
   });
   cookie = (login.headers.getSetCookie?.()[0] ?? '').split(';')[0];
   clientId = (await call('GET', '/api/clients')).body.clients[0].id;
