@@ -5,7 +5,9 @@ import {
   SearchField,
   SegmentedControl,
   Select,
+  ShowMore,
   TableHead,
+  useWindowed,
 } from '../components/ui';
 import { HEALTH_OPTIONS } from '../data/options';
 import type { Health } from '../data/types';
@@ -56,6 +58,7 @@ export function ClientsView() {
   );
 
   const total = state.clients.length;
+  const window = useWindowed(rows);
 
   return (
     <div className="page">
@@ -135,7 +138,7 @@ export function ClientsView() {
             'Since',
           ]}
         />
-        {rows.map(({ client, outstanding }) => (
+        {window.visible.map(({ client, outstanding }) => (
           <div
             key={client.id}
             className="table-row table-row--click"
@@ -188,6 +191,7 @@ export function ClientsView() {
             <div style={{ color: 'var(--ink-3)', fontSize: 12.5 }}>{fmtDate(client.startDate)}</div>
           </div>
         ))}
+        <ShowMore hidden={window.hidden} onShowMore={window.showMore} />
       </div>
       </>
       )}

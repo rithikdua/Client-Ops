@@ -1,4 +1,4 @@
-import { useEffect, useId, useRef, type CSSProperties, type ReactNode } from 'react';
+import { useEffect, useId, useRef, useState, type CSSProperties, type ReactNode } from 'react';
 import type { CurrencyCode } from '../data/types';
 import { SearchIcon } from '../ds/Icon';
 import { fmtMoney, moneyEntries, type MoneyByCurrency } from '../lib/money';
@@ -329,6 +329,46 @@ export function RowAction({
     >
       {children}
     </button>
+  );
+}
+
+/**
+ * Shows a slice of a long list, with a control to show more.
+ *
+ * The list screens render every row they are given. At six accounts that is
+ * invisible; at six hundred, with their invoices and deliverables, it is
+ * thousands of DOM nodes built on every keystroke in the search box. This keeps
+ * the page bounded without changing what the screen is *about* — the count is
+ * still of everything, and filtering still applies to everything.
+ *
+ * Deliberately not virtual scrolling: this is a list people read and search,
+ * not one they scroll for minutes, and "show more" is legible in a way a
+ * moving viewport is not.
+ */
+export function useWindowed<T>(rows: T[], step = 50) {
+  const [shown, setShown] = useState(step);
+  // Any change to the list is a new question being asked, so start again from
+  // the top rather than leaving someone deep inside results they replaced.
+  useEffect(() => setShown(step), [rows.length, step]);
+  return {
+    visible: rows.slice(0, shown),
+    hidden: Math.max(0, rows.length - shown),
+    showMore: () => setShown((n) => n + step),
+  };
+}
+
+/** The "N more" footer that goes under a windowed list. */
+export function ShowMore({ hidden, onShowMore }: { hidden: number; onShowMore: () => void }) {
+  if (hidden === 0) return null;
+  return (
+    <div className="table-row" style={{ display: 'flex', justifyContent: 'center', gap: 10 }}>
+      <button type="button" className="link-button" onClick={onShowMore}>
+        Show more
+      </button>
+      <span style={{ color: 'var(--ink-3)', fontSize: 13 }}>
+        {hidden} more {hidden === 1 ? 'row' : 'rows'}
+      </span>
+    </div>
   );
 }
 

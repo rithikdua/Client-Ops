@@ -1,4 +1,11 @@
-import { EmptyRow, PageHeader, RowAction, TableHead } from '../components/ui';
+import {
+  EmptyRow,
+  PageHeader,
+  RowAction,
+  ShowMore,
+  TableHead,
+  useWindowed,
+} from '../components/ui';
 import type { Client, ClientDocument } from '../data/types';
 import { Chip } from '../ds/Chip';
 import { Icon } from '../ds/Icon';
@@ -16,6 +23,8 @@ export function DocumentsView() {
   state.clients.forEach((c) => c.documents.forEach((doc) => rows.push({ client: c, doc })));
   rows.sort((a, b) => b.doc.date.localeCompare(a.doc.date));
 
+  const window = useWindowed(rows);
+
   return (
     <div className="page">
       <PageHeader
@@ -25,7 +34,7 @@ export function DocumentsView() {
 
       <div className="card card--clip">
         <TableHead gridTemplateColumns={GRID} columns={['Client', 'Document', 'Type', 'Added']} />
-        {rows.map(({ client, doc }) => (
+        {window.visible.map(({ client, doc }) => (
           <div
             key={doc.id}
             className={canOpenClients ? 'table-row table-row--click' : 'table-row'}
@@ -54,6 +63,7 @@ export function DocumentsView() {
             <span>{fmtDate(doc.date)}</span>
           </div>
         ))}
+        <ShowMore hidden={window.hidden} onShowMore={window.showMore} />
         {rows.length === 0 && <EmptyRow>No documents on file.</EmptyRow>}
       </div>
     </div>

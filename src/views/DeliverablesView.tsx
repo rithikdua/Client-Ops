@@ -1,4 +1,12 @@
-import { EmptyRow, PageHeader, RowAction, Select, TableHead } from '../components/ui';
+import {
+  EmptyRow,
+  PageHeader,
+  RowAction,
+  Select,
+  ShowMore,
+  TableHead,
+  useWindowed,
+} from '../components/ui';
 import type { Client, Deliverable, DeliverableStatus } from '../data/types';
 import { Chip } from '../ds/Chip';
 import { fmtDate } from '../lib/dates';
@@ -40,6 +48,8 @@ export function DeliverablesView() {
     sorted.sort((a, b) => a.sortKey.localeCompare(b.sortKey));
   }
 
+  const window = useWindowed(sorted);
+
   return (
     <div className="page">
       <PageHeader
@@ -66,7 +76,7 @@ export function DeliverablesView() {
           gridTemplateColumns={GRID}
           columns={['Client', 'Deliverable', 'Owner', 'Due', 'Status']}
         />
-        {sorted.map(({ client, deliverable: d }) => (
+        {window.visible.map(({ client, deliverable: d }) => (
           <div
             key={d.id}
             className={canOpenClients ? 'table-row table-row--click' : 'table-row'}
@@ -94,6 +104,7 @@ export function DeliverablesView() {
             </span>
           </div>
         ))}
+        <ShowMore hidden={window.hidden} onShowMore={window.showMore} />
         {sorted.length === 0 && <EmptyRow>No deliverables tracked yet.</EmptyRow>}
       </div>
     </div>

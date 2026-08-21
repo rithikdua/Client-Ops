@@ -95,8 +95,37 @@ export function clientRoutes(db: Db): Router {
     }
   };
 
+  /**
+   * The workspace, or one page of its clients.
+   *
+   * Without `limit` this answers with everything, which is the contract every
+   * screen is built on and what mutations still return. With it, `clients` is a
+   * window and `page` says how big the whole list is and where to continue —
+   * and the filters come with it, because a page is only meaningful if the
+   * server narrows and orders the list the same way the screen does.
+   */
   router.get('/', requireSection('clients'), (req, res) => {
-    res.json(snapshotFor(db, req));
+    const limit = Number(req.query.limit);
+    if (!req.query.limit) {
+      res.json(snapshotFor(db, req));
+      return;
+    }
+    if (!Number.isInteger(limit) || limit < 1) {
+      throw new HttpError(400, 'limit must be a whole number of clients.');
+    }
+    const sort = req.query.sort;
+    if (sort !== undefined && sort !== 'name' && sort !== 'value' && sort !== 'health') {
+      throw new HttpError(400, 'sort must be name, value or health.');
+    }
+    res.json(
+      buildSnapshot(db, req.actor!, {
+        limit,
+        cursor: typeof req.query.cursor === 'string' ? req.query.cursor : undefined,
+        search: typeof req.query.search === 'string' ? req.query.search : undefined,
+        health: typeof req.query.health === 'string' ? req.query.health : undefined,
+        sort,
+      }),
+    );
   });
 
   router.post('/', requireSection('clients'), requireWrite, (req, res) => {

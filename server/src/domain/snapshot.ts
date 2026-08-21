@@ -47,7 +47,34 @@ export interface Snapshot {
    * server does, instead of each side asking its own machine.
    */
   workspace: { timezone: string };
+  /**
+   * Present only when the caller asked for a page of clients.
+   *
+   * A snapshot without it carries every client the user may see, which is the
+   * contract every screen is built on and what mutations still answer with.
+   * With it, `clients` is one window onto the list.
+   */
+  page?: { total: number; returned: number; nextCursor: string | null };
 }
+
+/**
+ * How to narrow and cut up the client list.
+ *
+ * The filtering and sorting live here rather than in the browser because a page
+ * is only meaningful if the server sorts the same way the screen does —
+ * otherwise "the next 50" is the next 50 of a different list.
+ */
+export interface ClientPage {
+  limit: number;
+  /** The id after which to continue. Positional, so it survives inserts. */
+  cursor?: string;
+  search?: string;
+  health?: string;
+  sort?: 'name' | 'value' | 'health';
+}
+
+/** Nobody benefits from a page of 100,000, and it is a cheap way to ask for one. */
+export const MAX_PAGE = 500;
 
 /* -- assignments --------------------------------------------------------- */
 
@@ -105,54 +132,80 @@ interface ClientRow {
 
 const orEmpty = (v: string | null | undefined) => v ?? '';
 
-/**
- * Every attachment on one client's rows of one kind, in a single query.
+/* -- per-resource loaders ------------------------------------------------ */
+/*
+ * Each of these loads one collection for *every* client in one query, and
+ * returns it grouped by client.
  *
- * Asking per row would mean a query per invoice per client — the fan-out this
- * codebase is already trying to get rid of. The owning table is named rather
- * than interpolated from caller input: it becomes part of a SQL string.
+ * They used to take a client id and be called once per client, which is the
+ * fan-out F-08 is about: with 206 accounts a single snapshot ran 2,274 prepared
+ * statements and took 126ms; at 606 accounts, 6,674 statements and 413ms. Every
+ * mutation pays that, because every mutation answers with a snapshot.
+ *
+ * Nothing about the result changes — same rows, same order, same shape — so the
+ * cost of the old version was pure.
+ */
+
+/**
+ * Attachments for every row of one kind, keyed by the row they hang off.
+ *
+ * The owning table is named rather than passed through from a request: it
+ * becomes part of a SQL string.
  */
 function attachmentsByOwner(
   db: Db,
   ownerColumn: 'invoice_id' | 'deliverable_id' | 'document_id' | 'task_id',
-  clientId: string,
-  ownerTable: 'invoices' | 'deliverables' | 'documents' | 'tasks',
 ): Map<string, Attachment[]> {
-  return loadAttachments(
-    db,
-    `a.${ownerColumn} IN (SELECT id FROM ${ownerTable} WHERE client_id = ?)`,
-    [clientId],
-  );
+  return loadAttachments(db, `a.${ownerColumn} IS NOT NULL`, []);
 }
 
 /**
  * The single file an invoice, deliverable or document carries.
  *
- * The schema permits more than one — the table is shared with tasks, which hold
- * a list — so this is where "at most one" is enforced for the three that only
- * ever show one. Extra rows would be a bug elsewhere; showing the first is
- * better than showing nothing.
+ * The table permits more than one — it is shared with tasks, which hold a list
+ * — so this is where "at most one" is enforced for the three that only ever
+ * show one. Extra rows would be a bug elsewhere; showing the first beats
+ * showing nothing.
  */
 const firstFile = (list: Attachment[] | undefined) =>
   list?.length ? { name: list[0].name, url: list[0].url } : null;
 
-/* -- per-resource loaders ------------------------------------------------ */
-
-function loadContacts(db: Db, clientId: string): Contact[] {
-  return db
-    .prepare('SELECT id, name, role, email, phone FROM contacts WHERE client_id = ? AND archived_at IS NULL ORDER BY rowid')
-    .all(clientId) as Contact[];
+/**
+ * Restricts a collection query to the clients actually being returned.
+ *
+ * Without this, asking for a page of 50 still loads every invoice in the
+ * workspace — the query count would be fixed but the work would not be.
+ */
+function scope(alias: string, ids: string[] | undefined): string {
+  return ids ? ` AND ${alias}client_id IN (${ids.map(() => '?').join(',')})` : '';
 }
 
-function loadInvoices(db: Db, clientId: string): Invoice[] {
+function loadContacts(db: Db, ids?: string[]): Map<string, Contact[]> {
   const rows = db
     .prepare(
-      `SELECT id, number, amount_minor, base_amount_minor, gst_percent, gst_amount_minor,
-              gst_mode, issue_date, due_date
-         FROM invoices WHERE client_id = ? AND archived_at IS NULL ORDER BY rowid`,
+      `SELECT id, client_id, name, role, email, phone FROM contacts
+        WHERE archived_at IS NULL${scope('', ids)} ORDER BY client_id, rowid`,
     )
-    .all(clientId) as {
+    .all(...((ids ?? []) as never[])) as (Contact & { client_id: string })[];
+  const map = new Map<string, Contact[]>();
+  for (const { client_id, ...contact } of rows) {
+    const list = map.get(client_id);
+    if (list) list.push(contact);
+    else map.set(client_id, [contact]);
+  }
+  return map;
+}
+
+function loadInvoices(db: Db, ids?: string[]): Map<string, Invoice[]> {
+  const rows = db
+    .prepare(
+      `SELECT id, client_id, number, amount_minor, base_amount_minor, gst_percent,
+              gst_amount_minor, gst_mode, issue_date, due_date
+         FROM invoices WHERE archived_at IS NULL${scope('', ids)} ORDER BY client_id, rowid`,
+    )
+    .all(...((ids ?? []) as never[])) as {
     id: string;
+    client_id: string;
     number: string;
     amount_minor: number;
     base_amount_minor: number;
@@ -163,38 +216,62 @@ function loadInvoices(db: Db, clientId: string): Invoice[] {
     due_date: string;
   }[];
 
-  const files = attachmentsByOwner(db, 'invoice_id', clientId, 'invoices');
-  const paymentStmt = db.prepare(
-    'SELECT id, bank_amount_minor, tds_minor, date FROM payments WHERE invoice_id = ? ORDER BY date, rowid',
-  );
+  // Payments for every invoice at once, then handed out by invoice id.
+  const payments = new Map<string, Invoice['payments']>();
+  for (const p of db
+    .prepare(
+      `SELECT p.id, p.invoice_id, p.bank_amount_minor, p.tds_minor, p.date
+         FROM payments p JOIN invoices i ON i.id = p.invoice_id
+        WHERE 1 = 1${scope('i.', ids)}
+        ORDER BY p.invoice_id, p.date, p.rowid`,
+    )
+    .all(...((ids ?? []) as never[])) as {
+    id: string;
+    invoice_id: string;
+    bank_amount_minor: number;
+    tds_minor: number;
+    date: string;
+  }[]) {
+    const entry = { id: p.id, bankAmount: p.bank_amount_minor, tds: p.tds_minor, date: p.date };
+    const list = payments.get(p.invoice_id);
+    if (list) list.push(entry);
+    else payments.set(p.invoice_id, [entry]);
+  }
 
-  return rows.map((r) => ({
-    id: r.id,
-    number: r.number,
-    amount: r.amount_minor,
-    baseAmount: r.base_amount_minor,
-    gstPercent: r.gst_percent,
-    gstAmount: r.gst_amount_minor,
-    gstMode: r.gst_mode,
-    issueDate: r.issue_date,
-    dueDate: r.due_date,
-    file: firstFile(files.get(r.id)),
-    payments: (
-      paymentStmt.all(r.id) as { id: string; bank_amount_minor: number; tds_minor: number; date: string }[]
-    ).map((p) => ({ id: p.id, bankAmount: p.bank_amount_minor, tds: p.tds_minor, date: p.date })),
-  }));
+  const files = attachmentsByOwner(db, 'invoice_id');
+  const map = new Map<string, Invoice[]>();
+  for (const r of rows) {
+    const invoice: Invoice = {
+      id: r.id,
+      number: r.number,
+      amount: r.amount_minor,
+      baseAmount: r.base_amount_minor,
+      gstPercent: r.gst_percent,
+      gstAmount: r.gst_amount_minor,
+      gstMode: r.gst_mode,
+      issueDate: r.issue_date,
+      dueDate: r.due_date,
+      file: firstFile(files.get(r.id)),
+      payments: payments.get(r.id) ?? [],
+    };
+    const list = map.get(r.client_id);
+    if (list) list.push(invoice);
+    else map.set(r.client_id, [invoice]);
+  }
+  return map;
 }
 
-function loadDeliverables(db: Db, clientId: string): Deliverable[] {
+function loadDeliverables(db: Db, ids?: string[]): Map<string, Deliverable[]> {
   const rows = db
     .prepare(
-      `SELECT d.id, d.title, d.description, ${CURRENT_NAME('d', 'owner')}, d.owner_user_id,
-              d.due_date, d.status, d.version
+      `SELECT d.id, d.client_id, d.title, d.description, ${CURRENT_NAME('d', 'owner')},
+              d.owner_user_id, d.due_date, d.status, d.version
          FROM deliverables d ${ASSIGNEE_JOIN('d', 'owner_user_id')}
-        WHERE d.client_id = ? AND d.archived_at IS NULL ORDER BY d.rowid`,
+        WHERE d.archived_at IS NULL${scope('d.', ids)} ORDER BY d.client_id, d.rowid`,
     )
-    .all(clientId) as {
+    .all(...((ids ?? []) as never[])) as {
     id: string;
+    client_id: string;
     title: string;
     description: string;
     owner: string;
@@ -203,60 +280,85 @@ function loadDeliverables(db: Db, clientId: string): Deliverable[] {
     status: Deliverable['status'];
     version: number;
   }[];
-  const files = attachmentsByOwner(db, 'deliverable_id', clientId, 'deliverables');
-  return rows.map((r) => ({
-    id: r.id,
-    title: r.title,
-    description: r.description,
-    owner: r.owner,
-    ownerUserId: r.owner_user_id ?? undefined,
-    dueDate: r.due_date,
-    status: r.status,
-    version: r.version,
-    file: firstFile(files.get(r.id)),
-  }));
+  const files = attachmentsByOwner(db, 'deliverable_id');
+  const map = new Map<string, Deliverable[]>();
+  for (const r of rows) {
+    const list = map.get(r.client_id) ?? [];
+    list.push({
+      id: r.id,
+      title: r.title,
+      description: r.description,
+      owner: r.owner,
+      ownerUserId: r.owner_user_id ?? undefined,
+      dueDate: r.due_date,
+      status: r.status,
+      version: r.version,
+      file: firstFile(files.get(r.id)),
+    });
+    map.set(r.client_id, list);
+  }
+  return map;
 }
 
-function loadDocuments(db: Db, clientId: string): ClientDocument[] {
+function loadDocuments(db: Db, ids?: string[]): Map<string, ClientDocument[]> {
   const rows = db
-    .prepare('SELECT id, name, type, date, source FROM documents WHERE client_id = ? AND archived_at IS NULL ORDER BY rowid')
-    .all(clientId) as {
+    .prepare(
+      `SELECT id, client_id, name, type, date, source FROM documents
+        WHERE archived_at IS NULL${scope('', ids)} ORDER BY client_id, rowid`,
+    )
+    .all(...((ids ?? []) as never[])) as {
     id: string;
+    client_id: string;
     name: string;
     type: ClientDocument['type'];
     date: string;
     source: 'us' | 'client';
   }[];
-  const files = attachmentsByOwner(db, 'document_id', clientId, 'documents');
-  return rows.map((r) => ({
-    id: r.id,
-    name: r.name,
-    type: r.type,
-    date: r.date,
-    url: firstFile(files.get(r.id))?.url ?? '',
-    source: r.source,
-  }));
+  const files = attachmentsByOwner(db, 'document_id');
+  const map = new Map<string, ClientDocument[]>();
+  for (const r of rows) {
+    const list = map.get(r.client_id) ?? [];
+    list.push({
+      id: r.id,
+      name: r.name,
+      type: r.type,
+      date: r.date,
+      url: firstFile(files.get(r.id))?.url ?? '',
+      source: r.source,
+    });
+    map.set(r.client_id, list);
+  }
+  return map;
 }
 
-function loadActivity(db: Db, clientId: string): ActivityEntry[] {
-  return db
-    .prepare(
-      `SELECT id, date, author, note, kind FROM activity
-        WHERE client_id = ? ORDER BY date DESC, created_at DESC, rowid DESC`,
-    )
-    .all(clientId) as ActivityEntry[];
-}
-
-function loadTasks(db: Db, clientId: string): Task[] {
+function loadActivity(db: Db, ids?: string[]): Map<string, ActivityEntry[]> {
   const rows = db
     .prepare(
-      `SELECT t.id, t.title, t.description, ${CURRENT_NAME('t', 'assignee')}, t.assignee_user_id,
-              t.status, t.priority, t.due_date, t.version
-         FROM tasks t ${ASSIGNEE_JOIN('t', 'assignee_user_id')}
-        WHERE t.client_id = ? AND t.archived_at IS NULL ORDER BY t.rowid`,
+      `SELECT id, client_id, date, author, note, kind FROM activity
+        WHERE 1 = 1${scope('', ids)}
+        ORDER BY client_id, date DESC, created_at DESC, rowid DESC`,
     )
-    .all(clientId) as {
+    .all(...((ids ?? []) as never[])) as (ActivityEntry & { client_id: string })[];
+  const map = new Map<string, ActivityEntry[]>();
+  for (const { client_id, ...entry } of rows) {
+    const list = map.get(client_id);
+    if (list) list.push(entry);
+    else map.set(client_id, [entry]);
+  }
+  return map;
+}
+
+function loadTasks(db: Db, ids?: string[]): Map<string, Task[]> {
+  const rows = db
+    .prepare(
+      `SELECT t.id, t.client_id, t.title, t.description, ${CURRENT_NAME('t', 'assignee')},
+              t.assignee_user_id, t.status, t.priority, t.due_date, t.version
+         FROM tasks t ${ASSIGNEE_JOIN('t', 'assignee_user_id')}
+        WHERE t.archived_at IS NULL${scope('t.', ids)} ORDER BY t.client_id, t.rowid`,
+    )
+    .all(...((ids ?? []) as never[])) as {
     id: string;
+    client_id: string;
     title: string;
     description: string;
     assignee: string;
@@ -266,19 +368,54 @@ function loadTasks(db: Db, clientId: string): Task[] {
     due_date: string;
     version: number;
   }[];
-  const files = attachmentsByOwner(db, 'task_id', clientId, 'tasks');
-  return rows.map((r) => ({
-    id: r.id,
-    title: r.title,
-    description: r.description,
-    assignee: r.assignee,
-    assigneeUserId: r.assignee_user_id ?? undefined,
-    status: r.status,
-    priority: r.priority,
-    dueDate: r.due_date,
-    version: r.version,
-    attachments: (files.get(r.id) ?? []).map((a) => a.url),
-  }));
+  const files = attachmentsByOwner(db, 'task_id');
+  const map = new Map<string, Task[]>();
+  for (const r of rows) {
+    const list = map.get(r.client_id) ?? [];
+    list.push({
+      id: r.id,
+      title: r.title,
+      description: r.description,
+      assignee: r.assignee,
+      assigneeUserId: r.assignee_user_id ?? undefined,
+      status: r.status,
+      priority: r.priority,
+      dueDate: r.due_date,
+      version: r.version,
+      attachments: (files.get(r.id) ?? []).map((a) => a.url),
+    });
+    map.set(r.client_id, list);
+  }
+  return map;
+}
+
+/** Everything the client projection needs, loaded once for the whole snapshot. */
+interface Collections {
+  contacts: Map<string, Contact[]>;
+  invoices: Map<string, Invoice[]>;
+  deliverables: Map<string, Deliverable[]>;
+  documents: Map<string, ClientDocument[]>;
+  activity: Map<string, ActivityEntry[]>;
+  tasks: Map<string, Task[]>;
+}
+
+/**
+ * Loads only what this user is allowed to receive.
+ *
+ * The access check is here rather than after loading, so a teammate without
+ * invoice access does not cause the invoices query to run at all. That is both
+ * the permission and, at scale, most of the work.
+ */
+function loadCollections(db: Db, access: Access, ids?: string[]): Collections {
+  const empty = new Map<string, never[]>();
+  return {
+    contacts: access.clients ? loadContacts(db, ids) : empty,
+    tasks: access.clients ? loadTasks(db, ids) : empty,
+    activity: access.clients ? loadActivity(db, ids) : empty,
+    invoices: access.invoices ? loadInvoices(db, ids) : empty,
+    deliverables: access.deliverables ? loadDeliverables(db, ids) : empty,
+    documents: access.documents ? loadDocuments(db, ids) : empty,
+  };
 }
 
 /* -- assembly ------------------------------------------------------------ */
@@ -318,7 +455,7 @@ function needsClientRoster(access: Access): boolean {
  * invoices existed. Each section now brings its own rows, and asks only for the
  * client identity needed to label them.
  */
-function toClient(db: Db, row: ClientRow, access: Access): Client {
+function toClient(row: ClientRow, access: Access, all: Collections): Client {
   // Identity: what it takes to say which account a row belongs to, and to format
   // its amounts in the right currency. Never confidential.
   const base: Client = {
@@ -363,9 +500,9 @@ function toClient(db: Db, row: ClientRow, access: Access): Client {
     base.mandateType = row.mandate_type ?? 'Pilot';
     base.mandateOther = orEmpty(row.mandate_other);
     base.scopeOfWork = orEmpty(row.scope_of_work);
-    base.contacts = loadContacts(db, row.id);
-    base.tasks = loadTasks(db, row.id);
-    base.activity = loadActivity(db, row.id);
+    base.contacts = all.contacts.get(row.id) ?? [];
+    base.tasks = all.tasks.get(row.id) ?? [];
+    base.activity = all.activity.get(row.id) ?? [];
   }
 
   // Money is withheld entirely from anyone without invoice access.
@@ -375,13 +512,13 @@ function toClient(db: Db, row: ClientRow, access: Access): Client {
     base.gstPercent = row.gst_percent ?? undefined;
     base.gstAmount = row.gst_amount_minor ?? undefined;
     base.gstMode = row.gst_mode ?? undefined;
-    base.invoices = loadInvoices(db, row.id);
+    base.invoices = all.invoices.get(row.id) ?? [];
   }
   if (access.deliverables) {
-    base.deliverables = loadDeliverables(db, row.id);
+    base.deliverables = all.deliverables.get(row.id) ?? [];
   }
   if (access.documents) {
-    base.documents = loadDocuments(db, row.id);
+    base.documents = all.documents.get(row.id) ?? [];
   }
   return base;
 }
@@ -444,7 +581,60 @@ function accessSummary(access: Access): string {
   return granted.map((s) => s.label).join(', ');
 }
 
-export function buildSnapshot(db: Db, actor: Actor): Snapshot {
+/**
+ * The ORDER BY for each sort the Clients screen offers.
+ *
+ * Written out rather than built from the request: it is interpolated into SQL,
+ * and a page is only coherent if the server orders exactly as the screen does.
+ */
+const CLIENT_ORDER = {
+  name: 'c.name COLLATE NOCASE, c.id',
+  value: 'c.contract_value_minor DESC, c.id',
+  // The same precedence the screen uses: at-risk first, then active, churned.
+  health: `CASE c.health WHEN 'At Risk' THEN 0 WHEN 'Active' THEN 1 ELSE 2 END, c.id`,
+  created: 'c.created_at, c.rowid',
+} as const;
+
+export function buildSnapshot(db: Db, actor: Actor, page?: ClientPage): Snapshot {
+  const where: string[] = ['c.archived_at IS NULL'];
+  const params: unknown[] = [];
+  if (page?.search?.trim()) {
+    where.push('(c.name LIKE ? OR c.industry LIKE ?)');
+    const like = `%${page.search.trim()}%`;
+    params.push(like, like);
+  }
+  if (page?.health && page.health !== 'all') {
+    where.push('c.health = ?');
+    params.push(page.health);
+  }
+
+  const order = CLIENT_ORDER[page?.sort ?? 'created'];
+  // Everything the filters match, before the window is applied — so the screen
+  // can say "50 of 606" rather than only how many it happens to be holding.
+  const total = page
+    ? (
+        db
+          .prepare(`SELECT COUNT(*) AS n FROM clients c WHERE ${where.join(' AND ')}`)
+          .get(...(params as never[])) as { n: number }
+      ).n
+    : 0;
+
+  // A cursor is the id of the last row of the previous page. Its position in
+  // this ordering is found rather than assumed, so it keeps working when the
+  // sort changes underneath — and a stale one starts from the beginning rather
+  // than erroring, because a person's bookmark should not be a failure.
+  let offset = 0;
+  if (page?.cursor) {
+    const ids = db
+      .prepare(
+        `SELECT c.id FROM clients c ${ASSIGNEE_JOIN('c', 'owner_user_id')}
+          WHERE ${where.join(' AND ')} ORDER BY ${order}`,
+      )
+      .all(...(params as never[])) as { id: string }[];
+    const at = ids.findIndex((r) => r.id === page.cursor);
+    offset = at === -1 ? 0 : at + 1;
+  }
+
   const clientRows = db
     .prepare(
       // `c.*` already carries `owner`, so the account's name arrives under its
@@ -452,10 +642,20 @@ export function buildSnapshot(db: Db, actor: Actor): Snapshot {
       // matter of driver behaviour.
       `SELECT c.*, assignee_user.name AS owner_account_name
          FROM clients c ${ASSIGNEE_JOIN('c', 'owner_user_id')}
-        WHERE c.archived_at IS NULL
-        ORDER BY c.created_at, c.rowid`,
+        WHERE ${where.join(' AND ')}
+        ORDER BY ${order}
+        ${page ? 'LIMIT ? OFFSET ?' : ''}`,
     )
-    .all() as ClientRow[];
+    .all(...([...params, ...(page ? [Math.min(page.limit, MAX_PAGE), offset] : [])] as never[])) as ClientRow[];
+
+  // One query per collection rather than one per collection per client, and
+  // scoped to the page when there is one — so asking for 50 accounts does 50
+  // accounts' worth of work, not the whole workspace's.
+  const collections = loadCollections(
+    db,
+    actor.access,
+    page ? clientRows.map((row) => row.id) : undefined,
+  );
 
   return {
     me: {
@@ -482,10 +682,22 @@ export function buildSnapshot(db: Db, actor: Actor): Snapshot {
     // *contains* is decided by toClient() above. Gating the container on Clients
     // access is what made every other section unusable on its own.
     clients: needsClientRoster(actor.access)
-      ? clientRows.map((row) => toClient(db, row, actor.access))
+      ? clientRows.map((row) => toClient(row, actor.access, collections))
       : [],
     team: actor.access.team ? loadTeam(db) : [],
     followUps: actor.access.followups ? loadFollowUps(db) : [],
     workspace: { timezone: WORKSPACE_TIMEZONE },
+    ...(page
+      ? {
+          page: {
+            total,
+            returned: clientRows.length,
+            nextCursor:
+              offset + clientRows.length < total
+                ? (clientRows[clientRows.length - 1]?.id ?? null)
+                : null,
+          },
+        }
+      : {}),
   };
 }

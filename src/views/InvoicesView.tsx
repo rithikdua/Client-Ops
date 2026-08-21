@@ -1,4 +1,14 @@
-import { EmptyRow, Metric, MoneyTotals, PageHeader, SearchField, Select, TableHead } from '../components/ui';
+import {
+  EmptyRow,
+  Metric,
+  MoneyTotals,
+  PageHeader,
+  SearchField,
+  Select,
+  ShowMore,
+  TableHead,
+  useWindowed,
+} from '../components/ui';
 import type { Client, CurrencyCode, Invoice } from '../data/types';
 import { Chip } from '../ds/Chip';
 import { Chevron } from '../ds/Icon';
@@ -158,6 +168,8 @@ export function InvoicesView() {
       ]),
     );
 
+  const window = useWindowed(rows);
+
   return (
     <div className="page">
       <PageHeader
@@ -269,7 +281,7 @@ export function InvoicesView() {
           gridTemplateColumns={GRID}
           columns={['', 'Client', 'Invoice', 'Amount', 'Balance', 'Due', 'Status']}
         />
-        {rows.map(({ invoice: inv, client, currency, statusLabel, balance }) => {
+        {window.visible.map(({ invoice: inv, client, currency, statusLabel, balance }) => {
           const expanded = !!state.expandedInvoices[inv.id];
           const isPartial = statusLabel === 'Partially Paid';
           return (
@@ -426,6 +438,7 @@ export function InvoicesView() {
             </div>
           );
         })}
+        <ShowMore hidden={window.hidden} onShowMore={window.showMore} />
         {rows.length === 0 && <EmptyRow>No invoices yet.</EmptyRow>}
       </div>
     </div>

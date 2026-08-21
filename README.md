@@ -256,6 +256,18 @@ value with the next billing countdown, outstanding balance and open deliverables
   dialog traps focus, closes on Escape and hands focus back; tabs and the
   segmented toggles are one tab stop with arrow-key movement; and the focus ring
   is drawn rather than suppressed. `npm run a11y` proves it — see below.
+- **The snapshot costs a fixed number of queries, whatever the workspace holds.**
+  Each collection used to be fetched per client, so a snapshot of 206 accounts
+  ran 2,274 prepared statements and 606 ran 6,674 — on *every mutation*, because
+  every mutation answers with a snapshot. The loaders now fetch one collection at
+  a time for the whole set and hand rows out by client: 19 queries either way,
+  413ms down to 53ms at 606 accounts, with identical output.
+  `GET /api/clients?limit=&cursor=&search=&health=&sort=` returns the same
+  snapshot shape as a window plus a `page` object, and the filtering and sorting
+  are done in SQL — a page is only meaningful if the server orders the list the
+  same way the screen does. The list screens render 50 rows at a time with a
+  "show more", so a large workspace is not thousands of DOM nodes rebuilt on
+  every keystroke.
 - **Deleting hides a record; it does not destroy it** (`server/src/domain/archive.ts`).
   Deleting a client used to cascade through its invoices, payments, contacts,
   deliverables, documents and tasks — years of an account, gone on one click,
@@ -632,7 +644,15 @@ Honest list, in the order I would tackle them:
    implementable without dependencies; the open questions are policy ones
    (enforced for Owners or optional, recovery codes, lost-device handling), which
    is why it is not bundled in here.
-5. **No pagination.** Fine at seed scale, not at real scale.
+5. **The frontend still loads the whole workspace.** The server can paginate —
+   `GET /api/clients?limit=…` — and the query fan-out behind it is gone, so a
+   snapshot is a fixed 19 queries however large the workspace. But mutations
+   still answer with every client the user may see, which is ~450KB at 300
+   accounts and grows linearly. The list screens window their rendering, so the
+   cost is bandwidth and memory rather than a frozen page. Closing it properly
+   means the frontend adopting the paged endpoint and keeping a merged store,
+   which is a real change to how state works rather than a tuning exercise —
+   the endpoint exists so that change is possible without another schema pass.
 6. **Google sign-in has not been run against real Google credentials.** Every
    step around it is tested — including signature verification, against a local
    JWKS stub signed with a generated key — but the live token exchange needs a
@@ -650,7 +670,7 @@ Honest list, in the order I would tackle them:
 
 ## Verified
 
-`npm run typecheck`, `npm run build` and `npm test` (293 tests, one skipped
+`npm run typecheck`, `npm run build` and `npm test` (304 tests, one skipped
 because the sandbox runs as root and cannot make a directory unwritable) all
 pass, as does `npm run a11y` — axe reports **zero violations** on all fourteen
 screens and dialogs it visits, and all twenty-seven keyboard checks pass.
@@ -695,6 +715,13 @@ The migration was also run against the pre-existing development database rather
 than only a fresh seed — all 23 assignments across clients, deliverables, tasks
 and follow-ups linked to accounts on upgrade, and the later idempotency columns
 were added to that same database on the next start.
+
+Scaling was measured rather than assumed, on a generated workspace of 606
+accounts with their invoices, payments, deliverables, documents, tasks, contacts
+and activity: 6,674 prepared statements and 413ms before, 19 and 53ms after,
+byte-identical output. In a browser against 306 accounts the Clients screen
+renders 50 rows and offers "256 more", searching narrows the whole list, and a
+page of 50 from the API is 74KB against 448KB for the whole workspace.
 
 Archiving was driven through the real UI: deleting a client removed it from the
 list, **Clients ▸ Archived** showed it with the date it went, Restore brought it
