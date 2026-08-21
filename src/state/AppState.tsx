@@ -226,7 +226,7 @@ export interface AppActions {
   removeTeammate: (id: string) => void;
   removeFollowUp: (id: string) => void;
   reopenFollowUp: (id: string) => void;
-  markInvoicePaid: (clientId: string, invId: string) => void;
+  markInvoicePaid: (clientId: string, invId: string, balanceMinor: number) => void;
   removePayment: (clientId: string, invId: string, paymentId: string) => void;
   removeInvoiceFile: (clientId: string, invId: string) => void;
   removeDeliverableFile: (clientId: string, delId: string) => void;
@@ -459,6 +459,22 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
     const clientById = (id: string | undefined) =>
       stateRef.current.clients.find((c) => c.id === id);
     const openModal = (modal: ModalState, extra?: Partial<AppStateShape>) => patch({ modal, ...extra });
+
+    /** The payment form, pre-filled. Settling is this with the whole balance. */
+    const openPaymentForm = (clientId: string, invId: string, balanceMinor: number) =>
+      openModal(
+        {
+          type: 'logPayment',
+          clientId,
+          invId,
+          form: {
+            bankAmount: balanceMinor > 0 ? minorToInput(balanceMinor) : '',
+            tds: '',
+            date: todayISO(),
+          },
+        },
+        { invoiceMenuOpenId: null },
+      );
 
     return {
       login: async (email, password) => {
@@ -698,19 +714,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       },
 
       openLogPayment: (clientId, invId, balanceMinor) =>
-        openModal(
-          {
-            type: 'logPayment',
-            clientId,
-            invId,
-            form: {
-              bankAmount: balanceMinor > 0 ? minorToInput(balanceMinor) : '',
-              tds: '',
-              date: todayISO(),
-            },
-          },
-          { invoiceMenuOpenId: null },
-        ),
+        openPaymentForm(clientId, invId, balanceMinor),
 
       openAttachInvoiceFile: (clientId, invId, existing) =>
         openModal(
@@ -1213,9 +1217,11 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       reopenFollowUp: (id) => {
         void run(() => api.reopenFollowUp(id));
       },
-      markInvoicePaid: (clientId, invId) => {
-        void run(() => api.settleInvoice(clientId, invId), { onSuccess: { invoiceMenuOpenId: null } });
-      },
+      // Settling is just a payment for the whole balance, so it goes through the
+      // same form. The amount and date are pre-filled; the date stays editable,
+      // because "today" is a default rather than a fact.
+      markInvoicePaid: (clientId, invId, balanceMinor) =>
+        openPaymentForm(clientId, invId, balanceMinor),
       removePayment: (clientId, invId, paymentId) => {
         void run(() => api.removePayment(clientId, invId, paymentId));
       },

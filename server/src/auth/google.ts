@@ -1,5 +1,6 @@
 import { createHash, randomBytes } from 'node:crypto';
 import { newId, transact, type Db } from '../db/index';
+import { recordAudit } from '../domain/audit';
 import { HttpError } from '../http/errors';
 import { fullAccess } from './accounts';
 import { verifyJwtSignature } from './jwks';
@@ -171,6 +172,8 @@ interface UserRow {
   id: string;
   email: string;
   google_sub: string | null;
+  /** The address Google last reported, which may differ from `email`. */
+  google_email: string | null;
 }
 
 /**
@@ -194,21 +197,50 @@ export function resolveGoogleUser(db: Db, profile: GoogleProfile, config: Google
 
   // Already linked: the subject is authoritative, since the address can change.
   const linked = db
-    .prepare('SELECT id, email, google_sub FROM users WHERE google_sub = ?')
+    .prepare('SELECT id, email, google_sub, google_email FROM users WHERE google_sub = ?')
     .get(profile.sub) as UserRow | undefined;
   if (linked) {
-    if (linked.email !== profile.email) {
-      db.prepare('UPDATE users SET email = ? WHERE id = ?').run(profile.email, linked.id);
+    // Record what Google reports; do not overwrite the account's own address.
+    //
+    // The subject being authoritative for *authentication* does not make Google
+    // authoritative for *identity*. `users.email` is the password login, the
+    // address a reset link is handed to, the name in the audit trail and what an
+    // Owner recognises on the Team screen. Someone changing their Google profile
+    // — or an administrator moving a workspace account onto a personal address —
+    // silently rewrote all of that, with nothing recorded. Sign-in still works
+    // either way, because it is the subject that matches.
+    if (linked.google_email !== profile.email) {
+      db.prepare('UPDATE users SET google_email = ? WHERE id = ?').run(profile.email, linked.id);
+      // Recorded, because an address moving underneath an account is exactly
+      // the kind of change nobody notices until they are trying to work out
+      // what happened.
+      recordAudit(
+        db,
+        { userId: linked.id, name: profile.name, email: linked.email },
+        {
+          action: 'auth.google_email_changed',
+          targetType: 'user',
+          targetId: linked.id,
+          targetLabel: linked.email,
+          detail: `Google now reports ${profile.email}${
+            linked.google_email ? ` (was ${linked.google_email})` : ''
+          }; the account email is unchanged`,
+        },
+      );
     }
     return linked.id;
   }
 
   // First Google sign-in for an account that already exists: link them.
   const byEmail = db
-    .prepare('SELECT id, email, google_sub FROM users WHERE email = ?')
+    .prepare('SELECT id, email, google_sub, google_email FROM users WHERE email = ?')
     .get(profile.email) as UserRow | undefined;
   if (byEmail) {
-    db.prepare('UPDATE users SET google_sub = ? WHERE id = ?').run(profile.sub, byEmail.id);
+    db.prepare('UPDATE users SET google_sub = ?, google_email = ? WHERE id = ?').run(
+      profile.sub,
+      profile.email,
+      byEmail.id,
+    );
     return byEmail.id;
   }
 

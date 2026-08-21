@@ -165,14 +165,37 @@ describe('who a Google identity is allowed to be', () => {
     assert.equal(resolveGoogleUser(db, profile(), CONFIG), id);
   });
 
-  test('follows a changed Google email address via the stable subject', () => {
+  test('a changed Google address still signs in, without becoming the account (F-04)', () => {
     const id = addUser('someone@example.com');
     resolveGoogleUser(db, profile(), CONFIG);
 
     const resolved = resolveGoogleUser(db, profile({ email: 'new-address@example.com' }), CONFIG);
-    assert.equal(resolved, id);
-    const row = db.prepare('SELECT email FROM users WHERE id = ?').get(id) as { email: string };
-    assert.equal(row.email, 'new-address@example.com');
+    // The subject is authoritative for *authentication*: they get in.
+    assert.equal(resolved, id, 'the same account, found by the stable subject');
+
+    const row = db.prepare('SELECT email, google_email FROM users WHERE id = ?').get(id) as {
+      email: string;
+      google_email: string;
+    };
+    // But not for *identity*. users.email is the password login, the address a
+    // reset link goes to, and the name in the audit trail; Google changing a
+    // profile must not silently rewrite all three.
+    assert.equal(row.email, 'someone@example.com', 'the account email is untouched');
+    assert.equal(row.google_email, 'new-address@example.com', 'the Google address is recorded');
+  });
+
+  test('the divergence is recorded, not silent (F-04)', () => {
+    const id = addUser('recorded@example.com');
+    resolveGoogleUser(db, profile({ email: 'recorded@example.com' }), CONFIG);
+    resolveGoogleUser(db, profile({ email: 'moved-on@example.com' }), CONFIG);
+
+    const entry = db
+      .prepare("SELECT * FROM audit_log WHERE action = 'auth.google_email_changed' ORDER BY at DESC")
+      .get() as { target_id: string; detail: string; target_label: string } | undefined;
+    assert.ok(entry, 'an address moving underneath an account belongs in the trail');
+    assert.equal(entry.target_id, id);
+    assert.match(entry.detail, /moved-on@example\.com/);
+    assert.match(entry.detail, /account email is unchanged/);
   });
 
   test('REFUSES a Google account with no matching Client Ops account', () => {

@@ -11,6 +11,7 @@ export type AuditAction =
   | 'auth.login'
   | 'auth.login_failed'
   | 'auth.login_google'
+  | 'auth.google_email_changed'
   | 'auth.logout'
   | 'auth.password_change'
   | 'auth.reset_redeemed'

@@ -104,7 +104,7 @@ model working. Demo data is never loaded automatically; set `SEED_DEMO_DATA=1` i
 you want the server to load it on an empty database at boot.
 
 ```bash
-npm test           # 245 server tests (node:test)
+npm test           # 254 server tests (node:test)
 npm run typecheck  # both tsconfigs
 npm run build      # typecheck + production web build
 npm start          # production API (NODE_ENV=production)
@@ -369,6 +369,20 @@ where it counts:
   Every rejection says which rule it broke, since "not strong enough" is
   answered by adding an exclamation mark. An optional Have I Been Pwned check
   (`PASSWORD_BREACH_CHECK=1`) uses k-anonymity and fails open.
+- **A payment cannot predate its invoice.** Each date was valid on its own and
+  never compared, so a payment dated 1 August against an invoice issued on the
+  20th was accepted and quietly wrong — it lands in the previous month's cash and
+  moves figures for a period already reported. In practice it is a typed month or
+  year, so the refusal names the invoice and its issue date.
+- **Settling states its accounting date.** "Mark fully paid" opens the payment
+  form with the balance and today filled in, rather than recording a payment
+  dated today with no way to say otherwise: money that arrived on the 18th and
+  was reconciled on the 21st belongs to the 18th.
+- **Google signing in never changes the account's email.** The Google subject is
+  authoritative for *authentication*, not for identity — `users.email` is the
+  password login, where a reset link goes, and the name in the audit trail. A
+  changed Google profile is recorded in `google_email` and written to the audit
+  trail instead of silently rewriting all three.
 - **Billing and cash are counted separately.** The finance summary answers two
   questions, and says which is which: what was billed comes from invoices *issued*
   in the period, what came in comes from payments *dated* in it. An invoice
