@@ -173,7 +173,7 @@ export function InvoicesView() {
 
       <div className="card" style={{ padding: 24, marginBottom: 16 }}>
         <div style={{ marginBottom: 18 }}>
-          <div className="card-title">Finance summary</div>
+          <h2 className="card-title">Finance summary</h2>
           <div style={{ fontSize: 12, color: 'var(--ink-3)', marginTop: 4 }}>
             What was billed is counted from the invoice date; what came in is counted from the
             payment date.
@@ -229,6 +229,7 @@ export function InvoicesView() {
           placeholder="Search client or invoice #…"
         />
         <Select<InvoiceStatusFilter>
+          label="Filter invoices by status"
           value={state.invoiceStatusFilter}
           onChange={actions.setInvoiceStatusFilter}
           options={[
@@ -240,6 +241,7 @@ export function InvoicesView() {
           ]}
         />
         <Select<InvoicePeriod>
+          label="Filter invoices by period"
           value={state.invoicePeriod}
           onChange={actions.setInvoicePeriod}
           options={PERIOD_OPTIONS}
@@ -283,15 +285,27 @@ export function InvoicesView() {
                   cursor: 'pointer',
                 }}
               >
-                <Chevron open={expanded} />
+                <button
+                  type="button"
+                  className="icon-button"
+                  onClick={() => actions.toggleInvoiceExpand(inv.id)}
+                  aria-expanded={expanded}
+                  aria-controls={`invoice-${inv.id}`}
+                  aria-label={`Payment history for ${inv.number}`}
+                >
+                  <Chevron open={expanded} />
+                </button>
                 <span style={{ fontWeight: 600 }}>
                   {client.name}{' '}
                   {canOpenClients && (
-                    <span
+                    <button
+                      type="button"
+                      className="link-button"
                       onClick={(e) => {
                         e.stopPropagation();
                         actions.openClientTab(client.id, 'invoices');
                       }}
+                      aria-label={`Open ${client.name}`}
                       style={{
                         fontSize: 11,
                         color: 'var(--ink-3)',
@@ -301,7 +315,7 @@ export function InvoicesView() {
                       }}
                     >
                       open
-                    </span>
+                    </button>
                   )}
                 </span>
                 <span style={{ fontFamily: 'var(--font-mono)' }}>{inv.number}</span>
@@ -350,7 +364,7 @@ export function InvoicesView() {
               </div>
 
               {expanded && (
-                <div style={{ padding: '0 20px 16px 46px' }}>
+                <div id={`invoice-${inv.id}`} style={{ padding: '0 20px 16px 46px' }}>
                   <div className="expand-panel">
                     <div style={{ fontSize: 13, marginBottom: 12 }}>
                       <strong>{fmtMoney(invoicePaidAmount(inv), currency)}</strong>{' '}

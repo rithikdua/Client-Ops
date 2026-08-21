@@ -5,6 +5,7 @@ import { invoiceBalance } from '../../lib/invoices';
 import { useApp } from '../../state/AppState';
 import { taskProjectKey } from '../TaskBits';
 import { ClientForm } from './ClientForm';
+import { FocusTrap } from './FocusTrap';
 import {
   ActivityForm,
   AttachFileForm,
@@ -130,63 +131,100 @@ export function ModalHost() {
   const isPreview = modal.type === 'taskPreview';
   // Nothing to submit: the link already exists.
   const isInformational = modal.type === 'resetLink';
+  const canSubmit = !isPreview && !isInformational;
 
   return (
-    <div className="modal-backdrop" onClick={actions.closeModal}>
-      <div
-        className="modal"
-        style={{ width: modal.type === 'client' ? 680 : 460 }}
-        onClick={(e) => e.stopPropagation()}
-      >
-        <div className="modal-head">
-          <div className="modal-title">{title}</div>
-          <div className="modal-close" onClick={actions.closeModal}>
-            ×
-          </div>
-        </div>
-
-        <div className="modal-body">{body}</div>
-
-        <div className="modal-foot">
-          {modal.type === 'permissions' && (
-            <Button
-              variant="secondary"
-              size="md"
-              style={{ marginRight: 'auto' }}
-              onClick={() => actions.startPreview(modal.teammateId!)}
+    <div
+      className="modal-backdrop"
+      // `mousedown` on the backdrop itself, not any click that bubbles up to it:
+      // a click that starts inside the dialog and finishes on the backdrop —
+      // dragging to select text in a field, most often — used to discard
+      // everything the person had typed.
+      onMouseDown={(e) => {
+        if (e.target === e.currentTarget) actions.closeModal();
+      }}
+    >
+      <FocusTrap onEscape={actions.closeModal}>
+        {/*
+          The dialog role sits on the container and the form nests inside it:
+          a `form` cannot carry `role="dialog"` — its own implicit role does not
+          allow the swap, and assistive technology is entitled to ignore it.
+        */}
+        <div
+          className="modal"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="modal-title"
+          style={{ width: modal.type === 'client' ? 680 : 460 }}
+        >
+        <form
+          onSubmit={(e) => {
+            e.preventDefault();
+            if (canSubmit) actions.submitModal();
+            else actions.closeModal();
+          }}
+        >
+          <div className="modal-head">
+            <h2 className="modal-title" id="modal-title">
+              {title}
+            </h2>
+            <button
+              type="button"
+              className="modal-close"
+              onClick={actions.closeModal}
+              aria-label={`Close ${title}`}
             >
-              Preview as this user
-            </Button>
-          )}
-          {isInformational ? (
-            <Button variant="primary" size="md" onClick={actions.closeModal}>
-              Done
-            </Button>
-          ) : isPreview ? (
-            <>
-              <Button variant="secondary" size="md" onClick={actions.closeModal}>
-                Close
-              </Button>
+              <span aria-hidden="true">×</span>
+            </button>
+          </div>
+
+          <div className="modal-body">{body}</div>
+
+          <div className="modal-foot">
+            {modal.type === 'permissions' && (
               <Button
-                variant="primary"
+                variant="secondary"
                 size="md"
-                onClick={() => actions.openEditTask(modal.clientId!, modal.task!)}
+                style={{ marginRight: 'auto' }}
+                onClick={() => actions.startPreview(modal.teammateId!)}
               >
-                Edit ticket
+                Preview as this user
               </Button>
-            </>
-          ) : (
-            <>
-              <Button variant="secondary" size="md" onClick={actions.closeModal}>
-                Cancel
+            )}
+            {isInformational ? (
+              <Button variant="primary" size="md" onClick={actions.closeModal}>
+                Done
               </Button>
-              <Button variant="primary" size="md" onClick={actions.submitModal}>
-                Save
-              </Button>
-            </>
-          )}
+            ) : isPreview ? (
+              <>
+                <Button variant="secondary" size="md" onClick={actions.closeModal}>
+                  Close
+                </Button>
+                <Button
+                  variant="primary"
+                  size="md"
+                  onClick={() => actions.openEditTask(modal.clientId!, modal.task!)}
+                >
+                  Edit ticket
+                </Button>
+              </>
+            ) : (
+              <>
+                <Button variant="secondary" size="md" onClick={actions.closeModal}>
+                  Cancel
+                </Button>
+                {/* A submit button, so Enter in any field saves the form — the
+                    thing every keyboard user tries first, and which previously
+                    did nothing at all. */}
+                <Button variant="primary" size="md" type="submit">
+                  Save
+                </Button>
+              </>
+            )}
+          </div>
+        </form>
         </div>
-      </div>
+      </FocusTrap>
     </div>
   );
 }

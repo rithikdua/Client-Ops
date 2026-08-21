@@ -198,6 +198,7 @@ export function CompleteFollowUpForm() {
       <div>
         <div className="field">What next?</div>
         <SegmentedControl
+          label="What next?"
           value={isSnooze ? 'snooze' : 'done'}
           onChange={(v) => set('action', v)}
           options={[

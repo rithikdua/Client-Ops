@@ -58,15 +58,28 @@ export function Chevron({ open, size = 10 }: { open: boolean; size?: number }) {
   );
 }
 
-export function TrashButton({ onClick, size = 15 }: { onClick: () => void; size?: number }) {
+/**
+ * An icon-only delete control.
+ *
+ * This was a bare `<img onClick>`: not focusable, not activated by Enter, and
+ * announced only as an image called "Remove" with no hint of what it removes.
+ * It is now a button whose label names its target, because "Remove, button"
+ * repeated eight times down a table tells a screen-reader user nothing about
+ * which row they are on.
+ */
+export function TrashButton({
+  onClick,
+  size = 15,
+  label,
+}: {
+  onClick: () => void;
+  size?: number;
+  /** What is being removed, e.g. the contact's name. */
+  label: string;
+}) {
   return (
-    <img
-      src="/assets/icons/trash.svg"
-      width={size}
-      height={size}
-      onClick={onClick}
-      className="trash"
-      alt="Remove"
-    />
+    <button type="button" className="icon-button trash-button" onClick={onClick} aria-label={label}>
+      <img src="/assets/icons/trash.svg" width={size} height={size} className="trash" alt="" />
+    </button>
   );
 }

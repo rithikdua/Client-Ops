@@ -1,6 +1,6 @@
 import { Avatar } from '../ds/Avatar';
 import { Chip, type ChipColor } from '../ds/Chip';
-import { MoneyTotals, PageHeader, StatCard } from '../components/ui';
+import { MoneyTotals, PageHeader, RowAction, StatCard } from '../components/ui';
 import { addDays, fmtDate, parseISO, today } from '../lib/dates';
 import { invoiceBalance, isDeliverableOverdue, isInvoiceOverdue } from '../lib/invoices';
 import { addMoney, type MoneyByCurrency } from '../lib/money';
@@ -155,7 +155,7 @@ export function OverviewView() {
 
       <div style={{ display: 'grid', gridTemplateColumns: '1.3fr 1fr', gap: 20, marginTop: 24 }}>
         <div className="card card--clip">
-          <div className="card-head card-title">Needs attention</div>
+          <h2 className="card-head card-title">Needs attention</h2>
           {needsAttention.map((x) => {
             const reasons: { label: string; color: ChipColor }[] = [];
             if (x.c.health === 'At Risk') reasons.push({ label: 'At risk', color: 'amber' });
@@ -177,7 +177,16 @@ export function OverviewView() {
                   <Avatar initials={x.c.name[0]} size={32} />
                   <div style={{ minWidth: 0 }}>
                     <div style={{ fontFamily: 'var(--font-ui)', fontWeight: 600, fontSize: 13.5 }}>
-                      {x.c.name}
+                      {canOpenClients ? (
+                        <RowAction
+                          onClick={() => actions.openClient(x.c.id)}
+                          label={`Open ${x.c.name}`}
+                        >
+                          {x.c.name}
+                        </RowAction>
+                      ) : (
+                        x.c.name
+                      )}
                     </div>
                     <div style={{ fontSize: 12, color: 'var(--ink-3)', marginTop: 2 }}>
                       {x.c.industry}
@@ -217,7 +226,7 @@ export function OverviewView() {
         </div>
 
         <div className="card card--clip">
-          <div className="card-head card-title">Recent activity</div>
+          <h2 className="card-head card-title">Recent activity</h2>
           {recentActivity.map((act, i) => (
             <div
               key={i}
@@ -254,13 +263,15 @@ export function OverviewView() {
             className="card-head"
             style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}
           >
-            <div className="card-title">Upcoming follow-ups</div>
-            <span
+            <h2 className="card-title">Upcoming follow-ups</h2>
+            <button
+              type="button"
+              className="link-button"
               onClick={() => actions.goTo('followups')}
-              style={{ fontSize: 12.5, color: 'var(--phot-purple)', cursor: 'pointer' }}
+              style={{ fontSize: 12.5, fontWeight: 400 }}
             >
               View all {pendingFollowUps.length}
-            </span>
+            </button>
           </div>
           {pendingFollowUps.slice(0, 5).map((row) => (
             <div

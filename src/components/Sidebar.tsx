@@ -71,24 +71,36 @@ export function Sidebar() {
         Workspace
       </div>
 
-      {NAV_ORDER.filter((id) => access[id]).map((id) => {
-        const active = state.view === id;
-        return (
-          <div
-            key={id}
-            className="nav-item"
-            data-active={active}
-            onClick={() => actions.goTo(id)}
-          >
-            <Icon
-              name={NAV_META[id].icon}
-              size={16}
-              className={active ? 'icon-purple' : 'icon-muted'}
-            />
-            <span className="nav-label">{NAV_META[id].label}</span>
-          </div>
-        );
-      })}
+      {/* A list inside a nav landmark, so "skip to navigation" works and the
+          count is announced. Each item is a button rather than a link because
+          there is no routing yet and a fake href would break the back button. */}
+      <nav aria-label="Workspace sections">
+        <ul className="nav-list">
+          {NAV_ORDER.filter((id) => access[id]).map((id) => {
+            const active = state.view === id;
+            return (
+              <li key={id}>
+                <button
+                  type="button"
+                  className="nav-item"
+                  data-active={active}
+                  // The client detail view is reached from Clients, so it is not
+                  // its own section — nothing is current while you are inside it.
+                  aria-current={active ? 'page' : undefined}
+                  onClick={() => actions.goTo(id)}
+                >
+                  <Icon
+                    name={NAV_META[id].icon}
+                    size={16}
+                    className={active ? 'icon-purple' : 'icon-muted'}
+                  />
+                  <span className="nav-label">{NAV_META[id].label}</span>
+                </button>
+              </li>
+            );
+          })}
+        </ul>
+      </nav>
 
       <div style={{ flex: 1 }} />
 
@@ -117,28 +129,12 @@ export function Sidebar() {
           </div>
         </div>
         <div className="nav-label" style={{ display: 'flex', gap: 12, marginTop: 10 }}>
-          <span
-            onClick={actions.openChangePassword}
-            style={{
-              fontSize: 11.5,
-              fontWeight: 600,
-              color: 'var(--phot-purple)',
-              cursor: 'pointer',
-            }}
-          >
+          <button type="button" className="link-button" onClick={actions.openChangePassword}>
             Password
-          </span>
-          <span
-            onClick={actions.logout}
-            style={{
-              fontSize: 11.5,
-              fontWeight: 600,
-              color: 'var(--phot-purple)',
-              cursor: 'pointer',
-            }}
-          >
+          </button>
+          <button type="button" className="link-button" onClick={actions.logout}>
             Sign out
-          </span>
+          </button>
         </div>
       </div>
     </aside>

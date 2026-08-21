@@ -1,4 +1,4 @@
-import type { CSSProperties, ReactNode } from 'react';
+import { useEffect, useId, useRef, type CSSProperties, type ReactNode } from 'react';
 import type { CurrencyCode } from '../data/types';
 import { SearchIcon } from '../ds/Icon';
 import { fmtMoney, moneyEntries, type MoneyByCurrency } from '../lib/money';
@@ -19,7 +19,10 @@ export function PageHeader({
   return (
     <div className="page-head" style={{ alignItems: align, marginBottom }}>
       <div>
-        <div className="page-title">{title}</div>
+        {/* The page's heading, and the only `h1` on it. Every screen looked
+            like one unbroken run of text to anything that navigates by
+            headings, which is how most screen-reader users move around. */}
+        <h1 className="page-title">{title}</h1>
         {subtitle && <div className="page-subtitle">{subtitle}</div>}
       </div>
       {action}
@@ -43,7 +46,16 @@ export function SearchField({
   return (
     <div className="search" style={style}>
       <SearchIcon size={iconSize} />
-      <input value={value} onChange={(e) => onChange(e.target.value)} placeholder={placeholder} />
+      {/* `type="search"` so it is announced as a search box, and the placeholder
+          doubles as the label — there is no visible one, and a placeholder alone
+          disappears the moment anything is typed. */}
+      <input
+        type="search"
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        placeholder={placeholder}
+        aria-label={placeholder}
+      />
     </div>
   );
 }
@@ -54,6 +66,7 @@ export function Select<T extends string>({
   options,
   className = 'select',
   style,
+  label,
 }: {
   value: T;
   onChange: (v: T) => void;
@@ -61,12 +74,19 @@ export function Select<T extends string>({
   options: readonly (T | { value: T; label: string })[];
   className?: string;
   style?: CSSProperties;
+  /**
+   * Required, and not optional by oversight. These filters have no visible
+   * label — the current option doubles as one — so without this a screen
+   * reader announces "All health, combo box" with no clue what it filters.
+   */
+  label: string;
 }) {
   return (
     <select
       className={className}
       style={style}
       value={value}
+      aria-label={label}
       onChange={(e) => onChange(e.target.value as T)}
     >
       {options.map((opt) => {
@@ -82,31 +102,71 @@ export function Select<T extends string>({
   );
 }
 
+/**
+ * A one-of-several choice drawn as joined buttons.
+ *
+ * These were `div`s, so the choice could not be reached, read or changed from a
+ * keyboard at all — including the GST treatment toggle, which decides what an
+ * invoice is worth. It is a radio group: one tab stop for the whole control,
+ * arrow keys to move between options, exactly as a native radio group behaves.
+ */
 export function SegmentedControl<T extends string>({
   value,
   onChange,
   options,
   small = false,
   style,
+  label,
 }: {
   value: T;
   onChange: (v: T) => void;
   options: { value: T; label: string }[];
   small?: boolean;
   style?: CSSProperties;
+  /** Names the group. Point at a visible caption with `labelledBy` instead. */
+  label?: string;
+  labelledBy?: string;
 }) {
+  const group = useRef<HTMLDivElement>(null);
+
+  const move = (index: number, step: number) => {
+    const at = (index + step + options.length) % options.length;
+    onChange(options[at].value);
+    // The roving tab index follows the selection on re-render, but focus does
+    // not move on its own — without this the ring stays on the option you just
+    // left and the next arrow press goes the wrong way.
+    group.current?.querySelectorAll('button')[at]?.focus();
+  };
+
   return (
-    <div className="segmented" style={style}>
-      {options.map((opt) => (
-        <div
-          key={opt.value}
-          className={small ? 'seg-btn seg-btn--sm' : 'seg-btn'}
-          data-active={value === opt.value}
-          onClick={() => onChange(opt.value)}
-        >
-          {opt.label}
-        </div>
-      ))}
+    <div className="segmented" style={style} role="radiogroup" aria-label={label} ref={group}>
+      {options.map((opt, i) => {
+        const selected = value === opt.value;
+        return (
+          <button
+            key={opt.value}
+            type="button"
+            role="radio"
+            aria-checked={selected}
+            // Roving tab stop: the group is one stop, and arrows move inside it.
+            tabIndex={selected ? 0 : -1}
+            className={small ? 'seg-btn seg-btn--sm' : 'seg-btn'}
+            data-active={selected}
+            onClick={() => onChange(opt.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'ArrowRight' || e.key === 'ArrowDown') {
+                e.preventDefault();
+                move(i, 1);
+              } else if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') {
+                e.preventDefault();
+                move(i, -1);
+              }
+            }}
+          >
+            {opt.label}
+          </button>
+        );
+      })}
     </div>
   );
 }
@@ -136,24 +196,74 @@ export function EmptyRow({ children }: { children: ReactNode }) {
   return <div className="table-empty">{children}</div>;
 }
 
-/** Three-dot trigger with a small dropdown of actions. */
+/**
+ * Three-dot trigger with a small dropdown of actions.
+ *
+ * The trigger was a `div` holding a "⋮" character, which a screen reader reads
+ * out as the character itself if it reads it at all, and which no keyboard could
+ * reach. It is now a labelled button that says what row it belongs to, opens a
+ * menu, closes on Escape or a click elsewhere, and hands focus to the first item
+ * so the menu can be used without a mouse.
+ */
 export function RowMenu({
   open,
   onToggle,
   wide = false,
+  label,
   children,
 }: {
   open: boolean;
   onToggle: () => void;
   wide?: boolean;
+  /** Which row this menu acts on, e.g. the invoice number. */
+  label: string;
   children: ReactNode;
 }) {
+  const wrap = useRef<HTMLDivElement>(null);
+  const menuId = useId();
+
+  useEffect(() => {
+    if (!open) return;
+    wrap.current?.querySelector<HTMLElement>('.row-menu-item')?.focus();
+
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return;
+      onToggle();
+      // Back to the trigger, not to the top of the document — otherwise
+      // dismissing a menu costs you your place in a long table.
+      wrap.current?.querySelector<HTMLElement>('button')?.focus();
+    };
+    // A menu that only closes by clicking its own trigger again is a trap for
+    // anyone who opens one and then reaches for something else.
+    const onDown = (e: MouseEvent) => {
+      if (!wrap.current?.contains(e.target as Node)) onToggle();
+    };
+    document.addEventListener('keydown', onKey);
+    document.addEventListener('mousedown', onDown);
+    return () => {
+      document.removeEventListener('keydown', onKey);
+      document.removeEventListener('mousedown', onDown);
+    };
+  }, [open, onToggle]);
+
   return (
-    <div style={{ position: 'relative' }}>
-      <div className="icon-btn" onClick={onToggle}>
-        ⋮
-      </div>
-      {open && <div className={wide ? 'row-menu row-menu--wide' : 'row-menu'}>{children}</div>}
+    <div style={{ position: 'relative' }} ref={wrap}>
+      <button
+        type="button"
+        className="icon-btn"
+        onClick={onToggle}
+        aria-label={`Actions for ${label}`}
+        aria-haspopup="menu"
+        aria-expanded={open}
+        aria-controls={open ? menuId : undefined}
+      >
+        <span aria-hidden="true">⋮</span>
+      </button>
+      {open && (
+        <div id={menuId} role="menu" className={wide ? 'row-menu row-menu--wide' : 'row-menu'}>
+          {children}
+        </div>
+      )}
     </div>
   );
 }
@@ -168,9 +278,57 @@ export function RowMenuItem({
   danger?: boolean;
 }) {
   return (
-    <div className={danger ? 'row-menu-item row-menu-item--danger' : 'row-menu-item'} onClick={onClick}>
+    <button
+      type="button"
+      role="menuitem"
+      className={danger ? 'row-menu-item row-menu-item--danger' : 'row-menu-item'}
+      onClick={onClick}
+    >
       {children}
-    </div>
+    </button>
+  );
+}
+
+/**
+ * The one thing a table row does, as a real button.
+ *
+ * Whole rows carry an `onClick` here, which is a fine mouse affordance and no
+ * affordance at all otherwise: a `div` cannot be tabbed to, has no role, and
+ * Enter does nothing. Rather than bolt `role="button"` onto rows that already
+ * contain buttons of their own — nesting controls inside controls — the row's
+ * primary target becomes a button and the row click stays as a shortcut. The
+ * button is what keyboard and screen-reader users get, and it is named after
+ * the row rather than "open".
+ */
+export function RowAction({
+  onClick,
+  children,
+  style,
+  label,
+  expanded,
+  controls,
+}: {
+  onClick: () => void;
+  children: ReactNode;
+  style?: CSSProperties;
+  /** Overrides the visible text when that text is not self-explanatory. */
+  label?: string;
+  /** Set when the button reveals a panel, so its state is announced. */
+  expanded?: boolean;
+  controls?: string;
+}) {
+  return (
+    <button
+      type="button"
+      className="row-action"
+      style={style}
+      onClick={onClick}
+      aria-label={label}
+      aria-expanded={expanded}
+      aria-controls={controls}
+    >
+      {children}
+    </button>
   );
 }
 

@@ -13,6 +13,7 @@
     "preview": "vite preview",
     "typecheck": "tsc --noEmit && tsc --noEmit -p server/tsconfig.json",
     "test": "tsx --test server/test/*.test.ts",
+    "a11y": "node tools/a11y/audit.mjs",
     "db:reset": "tsx server/scripts/reset.ts",
     "create-user": "tsx server/scripts/create-user.ts",
     "db:demo": "tsx server/scripts/reset.ts --demo",

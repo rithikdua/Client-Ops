@@ -17,7 +17,7 @@ export function LoginView() {
   };
 
   return (
-    <div
+    <main
       style={{
         minHeight: '100vh',
         display: 'flex',
@@ -40,9 +40,9 @@ export function LoginView() {
           </div>
         </div>
 
-        <div className="page-title" style={{ fontSize: 22 }}>
+        <h1 className="page-title" style={{ fontSize: 22 }}>
           Sign in to Client Ops
-        </div>
+        </h1>
         <div className="page-subtitle" style={{ marginBottom: 20 }}>
           Use your workspace account.
         </div>
@@ -79,6 +79,7 @@ export function LoginView() {
 
         {state.error && (
           <div
+            role="alert"
             style={{
               marginTop: 14,
               padding: '10px 12px',
@@ -96,7 +97,7 @@ export function LoginView() {
           variant="primary"
           size="lg"
           style={{ width: '100%', marginTop: 18, justifyContent: 'center' }}
-          onClick={submit}
+          type="submit"
         >
           {state.busy ? 'Signing in…' : 'Sign in'}
         </Button>
@@ -106,6 +107,6 @@ export function LoginView() {
           {state.googleEnabled && ' If yours was set up with Google, use the button above.'}
         </div>
       </form>
-    </div>
+    </main>
   );
 }

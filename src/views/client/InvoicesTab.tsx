@@ -1,8 +1,8 @@
-import { EmptyRow, Metric, RowMenu, RowMenuItem, TableHead } from '../../components/ui';
+import { EmptyRow, Metric, RowAction, RowMenu, RowMenuItem, TableHead } from '../../components/ui';
 import type { Client } from '../../data/types';
 import { Button } from '../../ds/Button';
 import { Chip } from '../../ds/Chip';
-import { Icon } from '../../ds/Icon';
+import { Icon, TrashButton } from '../../ds/Icon';
 import { fmtDate } from '../../lib/dates';
 import {
   invoiceBankReceived,
@@ -111,7 +111,19 @@ export function InvoicesTab({ client }: { client: Client }) {
                   }}
                 />
                 <div>
-                  <span style={{ fontWeight: 600, fontFamily: 'var(--font-mono)' }}>{inv.number}</span>
+                  {/* The invoice number is the row's target: it opens the
+                      payment history, which was reachable only by clicking the
+                      progress bar — a bar that is not drawn at all unless the
+                      invoice happens to be part-paid. */}
+                  <RowAction
+                    onClick={() => actions.toggleInvoiceExpand(inv.id)}
+                    expanded={expanded}
+                    controls={`payments-${inv.id}`}
+                    label={`Payment history for ${inv.number}`}
+                    style={{ fontWeight: 600, fontFamily: 'var(--font-mono)' }}
+                  >
+                    {inv.number}
+                  </RowAction>
                   {inv.file && (
                     <div style={{ display: 'flex', alignItems: 'center', gap: 5, marginTop: 4 }}>
                       <Icon name="document" size={12} />
@@ -131,6 +143,7 @@ export function InvoicesTab({ client }: { client: Client }) {
                   {isPartial && (
                     <div
                       onClick={() => actions.toggleInvoiceExpand(inv.id)}
+                      aria-hidden="true"
                       style={{ cursor: 'pointer', marginTop: 6, width: 84 }}
                     >
                       <div
@@ -170,6 +183,7 @@ export function InvoicesTab({ client }: { client: Client }) {
                 {canWrite ? (
                   <RowMenu
                     wide
+                    label={inv.number}
                     open={state.invoiceMenuOpenId === inv.id}
                     onToggle={() => actions.toggleInvoiceMenu(inv.id)}
                   >
@@ -200,7 +214,7 @@ export function InvoicesTab({ client }: { client: Client }) {
               </div>
 
               {expanded && (
-                <div style={{ padding: '0 20px 16px 30px' }}>
+                <div id={`payments-${inv.id}`} style={{ padding: '0 20px 16px 30px' }}>
                   <div className="expand-panel">
                     <div
                       style={{
@@ -230,20 +244,20 @@ export function InvoicesTab({ client }: { client: Client }) {
                         </div>
                       </div>
                       {canMarkPaid && canWrite && (
-                        <div
+                        <button
+                          type="button"
+                          className="link-button"
                           onClick={() => actions.openLogPayment(client.id, inv.id, balance)}
+                          aria-label={`Log a payment against ${inv.number}`}
                           style={{
                             fontSize: 12.5,
-                            fontWeight: 600,
-                            color: 'var(--phot-purple)',
-                            cursor: 'pointer',
                             padding: '6px 10px',
                             border: '1px solid var(--phot-purple)',
                             borderRadius: 6,
                           }}
                         >
                           + Log payment
-                        </div>
+                        </button>
                       )}
                     </div>
                     {inv.payments.length > 0 ? (
@@ -286,13 +300,10 @@ export function InvoicesTab({ client }: { client: Client }) {
                             </span>
                             <span style={{ fontWeight: 600 }}>{fmtMoney(paymentSettled(p), currency)}</span>
                             {canWrite ? (
-                              <img
-                                src="/assets/icons/trash.svg"
-                                width={13}
-                                height={13}
+                              <TrashButton
+                                size={13}
                                 onClick={() => actions.removePayment(client.id, inv.id, p.id)}
-                                style={{ cursor: 'pointer', opacity: 0.5 }}
-                                alt="Remove"
+                                label={`Remove the ${fmtDate(p.date)} payment on ${inv.number}`}
                               />
                             ) : (
                               <span />

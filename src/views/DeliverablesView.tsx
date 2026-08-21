@@ -1,4 +1,4 @@
-import { EmptyRow, PageHeader, Select, TableHead } from '../components/ui';
+import { EmptyRow, PageHeader, RowAction, Select, TableHead } from '../components/ui';
 import type { Client, Deliverable, DeliverableStatus } from '../data/types';
 import { Chip } from '../ds/Chip';
 import { fmtDate } from '../lib/dates';
@@ -48,6 +48,7 @@ export function DeliverablesView() {
         align="flex-end"
         action={
           <Select<DeliverableSortBy>
+            label="Sort deliverables by"
             value={state.deliverableSortBy}
             onChange={actions.setDeliverableSortBy}
             options={[
@@ -72,7 +73,18 @@ export function DeliverablesView() {
             style={{ display: 'grid', gridTemplateColumns: GRID }}
             onClick={canOpenClients ? () => actions.openClientTab(client.id, 'deliverables') : undefined}
           >
-            <span style={{ fontWeight: 600 }}>{client.name}</span>
+            <span style={{ fontWeight: 600 }}>
+              {canOpenClients ? (
+                <RowAction
+                  onClick={() => actions.openClientTab(client.id, 'deliverables')}
+                  label={`Open ${client.name}, deliverables`}
+                >
+                  {client.name}
+                </RowAction>
+              ) : (
+                client.name
+              )}
+            </span>
             <span>{d.title}</span>
             <span>{d.owner}</span>
             <span>{fmtDate(d.dueDate)}</span>

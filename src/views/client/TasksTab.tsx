@@ -1,5 +1,5 @@
 import { AttachmentList, TaskStatusSelect, taskProjectKey } from '../../components/TaskBits';
-import { EmptyRow } from '../../components/ui';
+import { EmptyRow, RowAction } from '../../components/ui';
 import type { Client } from '../../data/types';
 import { Avatar } from '../../ds/Avatar';
 import { Button } from '../../ds/Button';
@@ -55,18 +55,18 @@ export function TasksTab({ client }: { client: Client }) {
                   </span>
                   <Chip color="purple">Task</Chip>
                 </div>
-                <span
+                <RowAction
                   onClick={() => actions.openTaskPreview(client.id, t)}
+                  label={`Open ticket ${projectKey}-${i + 1}: ${t.title}`}
                   style={{
                     fontSize: 13.5,
                     fontWeight: 600,
                     color: done ? 'var(--ink-3)' : 'var(--ink-1)',
                     textDecoration: done ? 'line-through' : 'none',
-                    cursor: 'pointer',
                   }}
                 >
                   {t.title}
-                </span>
+                </RowAction>
                 {t.description && (
                   <div style={{ fontSize: 12, color: 'var(--ink-3)', marginTop: 3, lineHeight: 1.4 }}>
                     {t.description}
@@ -122,9 +122,13 @@ export function TasksTab({ client }: { client: Client }) {
                   <>
                     <TaskStatusSelect
                       status={t.status}
+                      label={`Status of ${projectKey}-${i + 1}: ${t.title}`}
                       onChange={(status) => actions.setTaskStatus(client.id, t.id, status)}
                     />
-                    <TrashButton onClick={() => actions.removeTask(client.id, t.id)} />
+                    <TrashButton
+                      onClick={() => actions.removeTask(client.id, t.id)}
+                      label={`Remove ticket ${projectKey}-${i + 1}: ${t.title}`}
+                    />
                   </>
                 ) : (
                   <Chip color={taskStatusColor(t.status)}>{t.status}</Chip>

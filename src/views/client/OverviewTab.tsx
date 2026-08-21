@@ -173,9 +173,9 @@ export function OverviewTab({ client }: { client: Client }) {
         }}
       >
         <div className="card" style={{ padding: 20 }}>
-          <div className="card-title" style={{ marginBottom: 12 }}>
+          <h2 className="card-title" style={{ marginBottom: 12 }}>
             Primary contact
-          </div>
+          </h2>
           {primaryContact ? (
             <>
               <div style={{ fontWeight: 600, fontSize: 14 }}>{primaryContact.name}</div>
@@ -195,9 +195,9 @@ export function OverviewTab({ client }: { client: Client }) {
         </div>
 
         <div className="card" style={{ padding: 20 }}>
-          <div className="card-title" style={{ marginBottom: 12 }}>
+          <h2 className="card-title" style={{ marginBottom: 12 }}>
             Latest activity
-          </div>
+          </h2>
           {activity.slice(0, 3).map((act) => (
             <div
               key={act.id}

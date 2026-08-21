@@ -57,11 +57,20 @@ export function App() {
       data-nav={APP_SETTINGS.navStyle}
       data-glow={APP_SETTINGS.headerGlow}
     >
+      <a className="skip-link" href="#main">
+        Skip to content
+      </a>
       <Sidebar />
-      <div className="content">
+      <main className="content" id="main">
         <PreviewBanner />
+        {/*
+          `role="alert"` because a failed save is announced nowhere else: the
+          banner appears above the fold, focus stays in the form, and a
+          screen-reader user would otherwise re-submit into silence.
+        */}
         {state.error && (
           <div
+            role="alert"
             style={{
               position: 'sticky',
               top: 0,
@@ -78,12 +87,14 @@ export function App() {
             }}
           >
             <span>{state.error}</span>
-            <span
+            <button
+              type="button"
+              className="link-button"
               onClick={actions.dismissError}
-              style={{ cursor: 'pointer', fontWeight: 600, whiteSpace: 'nowrap' }}
+              style={{ color: '#B3200B', fontSize: 13, whiteSpace: 'nowrap' }}
             >
               Dismiss
-            </span>
+            </button>
           </div>
         )}
         {/* An account can exist with every section revoked. Say so, rather than
@@ -96,7 +107,7 @@ export function App() {
         {state.view === 'team' && <TeamView />}
         {state.view === 'followups' && <FollowUpsView />}
         {state.view === 'client' && selectedClient && <ClientDetailView client={selectedClient} />}
-      </div>
+      </main>
       <ModalHost />
     </div>
   );

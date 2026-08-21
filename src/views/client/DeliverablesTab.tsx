@@ -1,4 +1,5 @@
 import { EmptyRow, TableHead } from '../../components/ui';
+import { DELIVERABLE_CYCLE } from '../../data/options';
 import type { Client } from '../../data/types';
 import { Button } from '../../ds/Button';
 import { Chip } from '../../ds/Chip';
@@ -53,48 +54,69 @@ export function DeliverablesTab({ client }: { client: Client }) {
                     {d.file.name}
                   </a>
                   {canWrite && (
-                    <span
+                    <button
+                      type="button"
+                      className="link-button"
                       onClick={() => actions.openAttachFile(client.id, d.id, d.file)}
+                      aria-label={`Change the file attached to ${d.title}`}
                       style={{
                         fontSize: 11,
+                        fontWeight: 400,
                         color: 'var(--ink-3)',
-                        cursor: 'pointer',
                         textDecoration: 'underline',
                       }}
                     >
                       edit
-                    </span>
+                    </button>
                   )}
                 </div>
               ) : (
                 canWrite && (
-                  <div
+                  <button
+                    type="button"
+                    className="link-button"
                     onClick={() => actions.openAttachFile(client.id, d.id, null)}
+                    aria-label={`Attach the delivered file for ${d.title}`}
                     style={{
                       fontSize: 12,
+                      fontWeight: 400,
                       color: 'var(--ink-3)',
                       marginTop: 6,
-                      cursor: 'pointer',
                       textDecoration: 'underline',
                     }}
                   >
                     + Attach delivered file
-                  </div>
+                  </button>
                 )
               )}
             </div>
             <span>{d.owner}</span>
             <span>{fmtDate(d.dueDate)}</span>
-            {/* Clicking the status advances it: Not started → In progress → Done. */}
-            <span
-              style={{ display: 'flex', gap: 6, alignItems: 'center', cursor: canWrite ? 'pointer' : 'default' }}
-              onClick={canWrite ? () => actions.cycleDeliverable(client.id, d.id) : undefined}
-            >
-              <Chip color={deliverableStatusColor(d.status)}>{d.status}</Chip>
-              {isDeliverableOverdue(d) && <Chip color="red">Overdue</Chip>}
-            </span>
+            {/* Clicking the status advances it: Not started → In progress → Done.
+                Nothing on screen says so, so the button spells out what the next
+                press will do rather than just reading out the current status. */}
             {canWrite ? (
-              <TrashButton onClick={() => actions.removeItem('deliverables', client.id, d.id)} />
+              <button
+                type="button"
+                className="link-button"
+                style={{ display: 'flex', gap: 6, alignItems: 'center', fontWeight: 400 }}
+                onClick={() => actions.cycleDeliverable(client.id, d.id)}
+                aria-label={`${d.title} is ${d.status}. Advance to ${DELIVERABLE_CYCLE[d.status]}`}
+              >
+                <Chip color={deliverableStatusColor(d.status)}>{d.status}</Chip>
+                {isDeliverableOverdue(d) && <Chip color="red">Overdue</Chip>}
+              </button>
+            ) : (
+              <span style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+                <Chip color={deliverableStatusColor(d.status)}>{d.status}</Chip>
+                {isDeliverableOverdue(d) && <Chip color="red">Overdue</Chip>}
+              </span>
+            )}
+            {canWrite ? (
+              <TrashButton
+                onClick={() => actions.removeItem('deliverables', client.id, d.id)}
+                label={`Remove deliverable ${d.title}`}
+              />
             ) : (
               <span />
             )}

@@ -54,6 +54,7 @@ export function GstFields({
     <div style={layout === 'grid' ? { gridColumn: '1/-1' } : undefined}>
       <div className="field">GST treatment</div>
       <SegmentedControl
+        label="GST treatment"
         small
         value={mode}
         onChange={(v) => set('gstMode', v)}

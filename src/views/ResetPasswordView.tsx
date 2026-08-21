@@ -57,7 +57,7 @@ export function ResetPasswordView({ token }: { token: string }) {
   const message = localError ?? state.error;
 
   return (
-    <div
+    <main
       style={{
         minHeight: '100vh',
         display: 'flex',
@@ -84,9 +84,9 @@ export function ResetPasswordView({ token }: { token: string }) {
           <div style={{ color: 'var(--ink-3)', fontSize: 14 }}>Checking that link…</div>
         ) : !valid ? (
           <>
-            <div className="page-title" style={{ fontSize: 22 }}>
+            <h1 className="page-title" style={{ fontSize: 22 }}>
               That link has expired
-            </div>
+            </h1>
             <div className="page-subtitle" style={{ marginBottom: 20 }}>
               Reset links can only be used once, and they expire. Ask a workspace Owner for a new
               one.
@@ -102,9 +102,9 @@ export function ResetPasswordView({ token }: { token: string }) {
           </>
         ) : (
           <>
-            <div className="page-title" style={{ fontSize: 22 }}>
+            <h1 className="page-title" style={{ fontSize: 22 }}>
               Choose a new password
-            </div>
+            </h1>
             <div className="page-subtitle" style={{ marginBottom: 20 }}>
               You will be signed in once it is set.
             </div>
@@ -136,6 +136,7 @@ export function ResetPasswordView({ token }: { token: string }) {
 
             {message && (
               <div
+                role="alert"
                 style={{
                   marginTop: 14,
                   padding: '10px 12px',
@@ -153,13 +154,13 @@ export function ResetPasswordView({ token }: { token: string }) {
               variant="primary"
               size="lg"
               style={{ width: '100%', marginTop: 18, justifyContent: 'center' }}
-              onClick={submit}
+              type="submit"
             >
               {state.busy ? 'Setting password…' : 'Set password & sign in'}
             </Button>
           </>
         )}
       </form>
-    </div>
+    </main>
   );
 }

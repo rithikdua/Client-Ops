@@ -50,7 +50,7 @@ export function SetupView() {
   const message = localError ?? state.error;
 
   return (
-    <div
+    <main
       style={{
         minHeight: '100vh',
         display: 'flex',
@@ -73,9 +73,9 @@ export function SetupView() {
           </div>
         </div>
 
-        <div className="page-title" style={{ fontSize: 22 }}>
+        <h1 className="page-title" style={{ fontSize: 22 }}>
           Create your account
-        </div>
+        </h1>
         <div className="page-subtitle" style={{ marginBottom: 20 }}>
           This workspace is empty. The first account becomes its Owner, with full access and the
           ability to invite the rest of your team.
@@ -163,6 +163,7 @@ export function SetupView() {
 
         {message && (
           <div
+            role="alert"
             style={{
               marginTop: 14,
               padding: '10px 12px',
@@ -180,11 +181,11 @@ export function SetupView() {
           variant="primary"
           size="lg"
           style={{ width: '100%', marginTop: 18, justifyContent: 'center' }}
-          onClick={submit}
+          type="submit"
         >
           {state.busy ? 'Creating account…' : 'Create account & sign in'}
         </Button>
       </form>
-    </div>
+    </main>
   );
 }
