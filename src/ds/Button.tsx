@@ -33,6 +33,8 @@ export function Button({
   onClick,
   icon,
   style,
+  type = 'button',
+  ariaLabel,
 }: {
   variant?: ButtonVariant;
   size?: ButtonSize;
@@ -41,12 +43,17 @@ export function Button({
   /** Icon file name from `public/assets/icons`, rendered at 16px. */
   icon?: string;
   style?: CSSProperties;
+  /** `submit` inside a form, so Enter in a field activates it. */
+  type?: 'button' | 'submit';
+  /** Only needed when the visible text is not the whole story. */
+  ariaLabel?: string;
 }) {
   const s = SIZES[size];
   return (
     <button
-      type="button"
+      type={type}
       onClick={onClick}
+      aria-label={ariaLabel}
       style={{
         height: s.h,
         padding: `0 ${s.px}px`,
@@ -61,7 +68,10 @@ export function Button({
         cursor: 'pointer',
         transition: 'all 150ms cubic-bezier(0.2,0,0,1)',
         border: 'none',
-        outline: 'none',
+        // No `outline: none` here. It was hiding the focus ring on every button
+        // in the app, which is the whole keyboard experience. The ring is drawn
+        // by the `:focus-visible` rule in app.css, so it appears for keyboard
+        // users and stays out of the way of mouse users.
         letterSpacing: '-0.01em',
         whiteSpace: 'nowrap',
         ...VARIANTS[variant],

@@ -1,4 +1,4 @@
-import { PageHeader, SearchField, Select, TableHead } from '../components/ui';
+import { PageHeader, RowAction, SearchField, Select, TableHead } from '../components/ui';
 import { HEALTH_OPTIONS } from '../data/options';
 import type { Health } from '../data/types';
 import { Avatar } from '../ds/Avatar';
@@ -71,11 +71,13 @@ export function ClientsView() {
           placeholder="Search clients, industries…"
         />
         <Select<Health | 'all'>
+          label="Filter by health"
           value={state.healthFilter}
           onChange={actions.setHealthFilter}
           options={[{ value: 'all', label: 'All health' }, ...HEALTH_OPTIONS]}
         />
         <Select<SortBy>
+          label="Sort clients by"
           value={state.sortBy}
           onChange={actions.setSortBy}
           options={[
@@ -108,7 +110,15 @@ export function ClientsView() {
             <div style={{ display: 'flex', alignItems: 'center', gap: 10, minWidth: 0 }}>
               <Avatar initials={client.name[0]} size={30} />
               <div style={{ minWidth: 0 }}>
-                <div style={{ fontWeight: 600 }}>{client.name}</div>
+                {/* The row keeps its click for the mouse; this is what a
+                    keyboard reaches and what a screen reader announces. */}
+                <RowAction
+                  onClick={() => actions.openClient(client.id)}
+                  style={{ fontWeight: 600 }}
+                  label={`Open ${client.name}`}
+                >
+                  {client.name}
+                </RowAction>
                 <div style={{ fontSize: 12, color: 'var(--ink-3)' }}>{client.industry}</div>
               </div>
             </div>

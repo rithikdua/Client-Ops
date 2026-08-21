@@ -47,6 +47,106 @@ textarea:focus {
   box-shadow: 0 0 0 3px rgba(103, 41, 243, 0.12);
 }
 
+/* -- Keyboard focus ------------------------------------------------------ */
+/*
+ * One ring, everywhere, for anything focusable. The app previously set
+ * `outline: none` on buttons and fields and drew nothing in its place, so
+ * tabbing through it was invisible — you could not tell what Enter would do.
+ *
+ * `:focus-visible` rather than `:focus` is what keeps that from being a
+ * regression for mouse users: the browser shows the ring for keyboard focus and
+ * withholds it for a click, which is why the outline was removed in the first
+ * place. Offsetting rather than replacing the outline means it stays visible on
+ * dark, light and coloured buttons alike.
+ */
+:focus-visible {
+  outline: 2px solid var(--phot-purple);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+/*
+ * Controls that replaced clickable `div`s. Buttons bring their own font,
+ * border, background and centring, none of which the original markup had, so
+ * each of these turns those off and inherits instead — the visual result is
+ * identical to the div it replaced.
+ */
+.nav-item,
+.seg-btn,
+.row-menu-item,
+.icon-btn,
+.row-action,
+.link-button,
+.icon-button,
+.tab-button {
+  font: inherit;
+  color: inherit;
+  background: none;
+  border: none;
+  margin: 0;
+  text-align: left;
+  cursor: pointer;
+}
+
+/** Text that acts like a link but does not navigate. */
+.link-button {
+  padding: 0;
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--phot-purple);
+}
+
+/** A table row's primary target: reads as the row's own text. */
+.row-action {
+  padding: 0;
+  display: block;
+  max-width: 100%;
+}
+
+/** An icon-only control: the icon is decorative, the label is on the button. */
+.icon-button {
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.nav-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.nav-item {
+  width: 100%;
+}
+
+/*
+ * Lets a keyboard user reach the page without tabbing the whole sidebar first.
+ * Off-screen until focused, which is the point: it is for people who never see
+ * it and everything for those who do.
+ */
+.skip-link {
+  position: absolute;
+  left: -9999px;
+  top: 0;
+  z-index: 100;
+  padding: 10px 16px;
+  background: var(--phot-purple);
+  color: #fff;
+  font-family: var(--font-ui);
+  font-size: 13px;
+  font-weight: 600;
+  border-radius: 0 0 8px 0;
+}
+
+.skip-link:focus {
+  left: 0;
+}
+
 /* -- Density ------------------------------------------------------------- */
 /* The prototype exposed `density` as a component prop with two settings. */
 .app {
@@ -163,6 +263,8 @@ textarea:focus {
   font-weight: 700;
   font-size: 32px;
   letter-spacing: -0.02em;
+  /* An `h1` now, which brings a browser margin the `div` never had. */
+  margin: 0;
 }
 
 .page-subtitle {
@@ -182,6 +284,7 @@ textarea:focus {
   font-family: var(--font-ui);
   font-weight: 700;
   font-size: 15px;
+  margin: 0;
 }
 
 .meta-label {
@@ -278,7 +381,6 @@ textarea:focus {
   gap: 8px;
   cursor: pointer;
   border: none;
-  outline: none;
   letter-spacing: -0.01em;
   flex-shrink: 0;
   white-space: nowrap;
@@ -333,7 +435,6 @@ textarea:focus {
 .search input {
   flex: 1;
   border: none;
-  outline: none;
   font-family: Inter;
   font-size: 13px;
   color: var(--ink-1);
@@ -381,6 +482,9 @@ textarea:focus {
   font-size: 13px;
   cursor: pointer;
   color: var(--ink-1);
+  /* A `div` filled the menu on its own; a button shrinks to its text. */
+  display: block;
+  width: 100%;
 }
 
 .row-menu--wide .row-menu-item {
@@ -452,7 +556,6 @@ textarea:focus {
   font-family: Inter;
   font-size: 14px;
   color: var(--ink-1);
-  outline: none;
   box-sizing: border-box;
   margin-top: 4px;
 }
@@ -527,9 +630,16 @@ textarea.field-input {
   font-family: var(--font-ui);
   font-weight: 700;
   font-size: 17px;
+  /* A heading now, so the dialog has a name and shows up in the outline —
+     which brings a browser default margin that the layout never had. */
+  margin: 0;
 }
 
 .modal-close {
+  font: inherit;
+  background: none;
+  border: none;
+  padding: 0;
   width: 28px;
   height: 28px;
   border-radius: 8px;

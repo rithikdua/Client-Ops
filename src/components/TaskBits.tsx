@@ -14,14 +14,18 @@ export function taskProjectKey(clientName: string): string {
 export function TaskStatusSelect({
   status,
   onChange,
+  label,
 }: {
   status: TaskStatus;
   onChange: (status: TaskStatus) => void;
+  /** Which ticket's status this is — every row shows the same five words. */
+  label: string;
 }) {
   const p = CHIP_PALETTES[taskStatusColor(status)];
   return (
     <select
       value={status}
+      aria-label={label}
       onChange={(e) => onChange(e.target.value as TaskStatus)}
       style={{
         display: 'inline-block',

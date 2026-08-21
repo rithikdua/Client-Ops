@@ -1,6 +1,7 @@
 import {
   EmptyRow,
   PageHeader,
+  RowAction,
   RowMenu,
   RowMenuItem,
   SearchField,
@@ -44,6 +45,7 @@ export function FollowUpsView() {
       />
 
       <SegmentedControl<FollowUpSubTab>
+        label="Which list to show"
         value={state.followUpSubTab}
         onChange={actions.setFollowUpSubTab}
         options={[
@@ -57,6 +59,7 @@ export function FollowUpsView() {
         <>
           <div style={{ marginBottom: 16 }}>
             <Select<FollowUpStatusFilter>
+              label="Filter follow-ups by status"
               value={state.followUpStatusFilter}
               onChange={actions.setFollowUpStatusFilter}
               options={[
@@ -88,11 +91,22 @@ export function FollowUpsView() {
                       position: 'relative',
                     }}
                   >
-                    <div onClick={() => actions.toggleFollowUpExpand(row.id)} style={{ cursor: 'pointer' }}>
+                    <button
+                      type="button"
+                      className="icon-button"
+                      onClick={() => actions.toggleFollowUpExpand(row.id)}
+                      aria-expanded={expanded}
+                      aria-controls={`followup-${row.id}`}
+                      aria-label={`Call history for ${row.name}`}
+                    >
                       <Chevron open={expanded} />
-                    </div>
+                    </button>
                     <div style={{ minWidth: 0, paddingRight: 10 }}>
-                      <div
+                      <RowAction
+                        onClick={() => actions.toggleFollowUpExpand(row.id)}
+                        expanded={expanded}
+                        controls={`followup-${row.id}`}
+                        label={`Call history for ${row.name}`}
                         style={{
                           fontWeight: 600,
                           overflow: 'hidden',
@@ -101,7 +115,7 @@ export function FollowUpsView() {
                         }}
                       >
                         {row.name}
-                      </div>
+                      </RowAction>
                       {row.email && (
                         <div
                           style={{
@@ -129,48 +143,60 @@ export function FollowUpsView() {
                       )}
                     </div>
                     {row.client && canOpenClients ? (
-                      <span
+                      <RowAction
                         onClick={() => actions.openClient(row.client!.id)}
-                        style={{ cursor: 'pointer', color: 'var(--phot-purple)' }}
+                        label={`Open ${row.clientName}`}
+                        style={{ color: 'var(--phot-purple)' }}
                       >
                         {row.clientName}
-                      </span>
+                      </RowAction>
                     ) : (
                       <span style={{ color: 'var(--ink-3)' }}>{row.clientName}</span>
                     )}
                     <div style={{ minWidth: 0 }}>
                       <div style={{ color: 'var(--ink-2)' }}>{row.reason}</div>
                       {row.logCount > 0 && (
-                        <div
+                        <RowAction
                           onClick={() => actions.toggleFollowUpExpand(row.id)}
+                          expanded={expanded}
+                          controls={`followup-${row.id}`}
                           style={{
                             fontSize: 11.5,
                             color: 'var(--phot-purple)',
                             marginTop: 3,
-                            cursor: 'pointer',
                           }}
                         >
                           {row.logCount} past call(s) · last: “{row.lastLogNote}”
-                        </div>
+                        </RowAction>
                       )}
                     </div>
                     <span>{row.owner}</span>
                     <span>{row.dueDateFormatted}</span>
-                    <span
-                      onClick={
-                        canWrite
-                          ? () =>
-                              row.status === 'Done'
-                                ? actions.reopenFollowUp(row.id)
-                                : actions.openCompleteFollowUp(row.id)
-                          : undefined
-                      }
-                      style={{ cursor: canWrite ? 'pointer' : 'default' }}
-                    >
-                      <Chip color={row.statusColor}>{row.statusLabel}</Chip>
-                    </span>
+                    {canWrite ? (
+                      <button
+                        type="button"
+                        className="link-button"
+                        onClick={() =>
+                          row.status === 'Done'
+                            ? actions.reopenFollowUp(row.id)
+                            : actions.openCompleteFollowUp(row.id)
+                        }
+                        aria-label={
+                          row.status === 'Done'
+                            ? `Reopen the follow-up for ${row.name}`
+                            : `Complete the follow-up for ${row.name}`
+                        }
+                      >
+                        <Chip color={row.statusColor}>{row.statusLabel}</Chip>
+                      </button>
+                    ) : (
+                      <span>
+                        <Chip color={row.statusColor}>{row.statusLabel}</Chip>
+                      </span>
+                    )}
                     {canWrite ? (
                       <RowMenu
+                        label={`the follow-up for ${row.name}`}
                         open={state.followUpMenuOpenId === row.id}
                         onToggle={() => actions.toggleFollowUpMenu(row.id)}
                       >
@@ -224,7 +250,7 @@ export function FollowUpsView() {
       {isPhonebook && (
         <div className="card card--clip">
           <div className="card-head">
-            <div className="card-title">Phonebook</div>
+            <h2 className="card-title">Phonebook</h2>
             <div style={{ color: 'var(--ink-3)', fontSize: 13, marginTop: 4 }}>
               Every client contact, in one searchable directory.
             </div>
@@ -251,12 +277,13 @@ export function FollowUpsView() {
                 <div style={{ fontSize: 12, color: 'var(--ink-3)', marginTop: 2 }}>{pb.role}</div>
               </div>
               {canOpenClients ? (
-                <span
+                <RowAction
                   onClick={() => actions.openClientTab(pb.clientId, 'contacts')}
-                  style={{ cursor: 'pointer', color: 'var(--phot-purple)' }}
+                  label={`Open ${pb.clientName}, contacts`}
+                  style={{ color: 'var(--phot-purple)' }}
                 >
                   {pb.clientName}
-                </span>
+                </RowAction>
               ) : (
                 <span>{pb.clientName}</span>
               )}

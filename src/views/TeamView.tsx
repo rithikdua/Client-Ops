@@ -64,35 +64,34 @@ export function TeamView() {
               <div style={{ display: 'flex', alignItems: 'center', gap: 14, justifyContent: 'flex-end' }}>
                 {canManageTeam && (
                   <>
-                    <span
+                    {/* Every row holds the same three words, so each says whose
+                        access, whose password and whose account it acts on. */}
+                    <button
+                      type="button"
+                      className="link-button"
                       onClick={() => actions.openManagePermissions(t)}
-                      style={{
-                        fontSize: 12.5,
-                        color: 'var(--phot-purple)',
-                        cursor: 'pointer',
-                        fontWeight: 600,
-                        whiteSpace: 'nowrap',
-                      }}
+                      aria-label={`Manage access for ${t.name}`}
+                      style={{ fontSize: 12.5, whiteSpace: 'nowrap' }}
                     >
                       Manage
-                    </span>
+                    </button>
                     {/* Recovery for a teammate who cannot get in, without
                         deleting the account and losing its history. */}
                     {t.id !== state.me?.id && (
-                      <span
+                      <button
+                        type="button"
+                        className="link-button"
                         onClick={() => actions.createResetLink(t)}
-                        style={{
-                          fontSize: 12.5,
-                          color: 'var(--phot-purple)',
-                          cursor: 'pointer',
-                          fontWeight: 600,
-                          whiteSpace: 'nowrap',
-                        }}
+                        aria-label={`Create a password reset link for ${t.name}`}
+                        style={{ fontSize: 12.5, whiteSpace: 'nowrap' }}
                       >
                         Reset
-                      </span>
+                      </button>
                     )}
-                    <TrashButton onClick={() => actions.removeTeammate(t.id)} />
+                    <TrashButton
+                      onClick={() => actions.removeTeammate(t.id)}
+                      label={`Remove ${t.name} from the workspace`}
+                    />
                   </>
                 )}
               </div>

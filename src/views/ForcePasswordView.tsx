@@ -37,7 +37,7 @@ export function ForcePasswordView() {
   const message = localError ?? state.error;
 
   return (
-    <div
+    <main
       style={{
         minHeight: '100vh',
         display: 'flex',
@@ -60,9 +60,9 @@ export function ForcePasswordView() {
           </div>
         </div>
 
-        <div className="page-title" style={{ fontSize: 22 }}>
+        <h1 className="page-title" style={{ fontSize: 22 }}>
           Set your own password
-        </div>
+        </h1>
         <div className="page-subtitle" style={{ marginBottom: 20 }}>
           Your account was created with a temporary password, so whoever set it up still knows it.
           Choose your own to continue.
@@ -105,6 +105,7 @@ export function ForcePasswordView() {
 
         {message && (
           <div
+            role="alert"
             style={{
               marginTop: 14,
               padding: '10px 12px',
@@ -122,25 +123,25 @@ export function ForcePasswordView() {
           variant="primary"
           size="lg"
           style={{ width: '100%', marginTop: 18, justifyContent: 'center' }}
-          onClick={submit}
+          type="submit"
         >
           {state.busy ? 'Saving…' : 'Set password & continue'}
         </Button>
 
-        <div
+        <button
+          type="button"
+          className="link-button"
           onClick={actions.logout}
           style={{
             marginTop: 14,
             fontSize: 12.5,
-            color: 'var(--phot-purple)',
-            cursor: 'pointer',
             textAlign: 'center',
-            fontWeight: 600,
+            width: '100%',
           }}
         >
           Sign out instead
-        </div>
+        </button>
       </form>
-    </div>
+    </main>
   );
 }

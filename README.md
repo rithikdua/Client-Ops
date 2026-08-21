@@ -116,6 +116,17 @@ npm run audit      # print the audit trail (--limit, --action 'team.*', --json)
 npm run backup     # verified snapshot of the database (--list to see them)
 npm run restore    # put one back:  npm run restore -- --latest
 npm run maintenance # one pass: backup, verify, prune, sweep orphans
+npm run a11y       # accessibility audit against a running app (see below)
+```
+
+`npm run a11y` needs a browser and a server, so its two dependencies are kept
+out of `package.json` — installing Chromium for every checkout is a poor trade
+for a check most commits do not need:
+
+```bash
+npm run build && SERVE_STATIC=1 npm start   # in another terminal
+npm i --no-save playwright axe-core
+BASE=http://localhost:8787 npm run a11y
 ```
 
 ## Deployment
@@ -236,6 +247,14 @@ value with the next billing countdown, outstanding balance and open deliverables
 - **Billing periods** walk forward from the contract start date in whole cycles
   for "paid this quarter/month/year" and the next-billing countdown. One-time
   contracts show no recurrence.
+- **The app is operable from a keyboard**, which it was not: the design's
+  clickable elements were `div`s and `span`s, so tabbing reached almost nothing,
+  Enter did nothing, and the client detail tabs — half the record — could only
+  be opened with a mouse. Every control is now a real control with a name that
+  says which row it acts on ("Remove contact Anita Rao", not "Remove"); the
+  dialog traps focus, closes on Escape and hands focus back; tabs and the
+  segmented toggles are one tab stop with arrow-key movement; and the focus ring
+  is drawn rather than suppressed. `npm run a11y` proves it — see below.
 - **Activity log** merges hand-written notes with auto-logged system events
   (invoices, payments, deliverables, documents, contacts, client edits, task and
   deliverable status changes). The `system` kind is set by the server only — a
@@ -527,6 +546,17 @@ These weren't specified in the handoff, so they're called out rather than buried
 9. **Presentation settings** (density, sidebar rail, header glow) were
    design-tool props, not in-app controls, so they are constants in
    `src/state/settings.ts` driven by `data-` attributes on the shell.
+10. **Five palette values were darkened for contrast** — the only place the
+    handed-off design is altered rather than reproduced. Muted text (`--ink-3`)
+    sat at 3.36:1 on white, `--danger` at 3.75:1, `--success` at 3.17:1, and the
+    green, amber and red chips between 2.71:1 and 3.55:1, all under the 4.5:1
+    that WCAG AA asks of text this size. Each moved within its own hue and every
+    background is untouched, so the palette still reads as the design's; the
+    ratios and the originals are recorded beside each value in `tokens.css` and
+    `ds/Chip.tsx`. This is a judgement call worth knowing about: it is a visible
+    change, applied deliberately, because the alternative is text that a
+    meaningful number of people cannot read — and the affected chips are exactly
+    the ones carrying meaning, "At Risk" and "Overdue".
 
 ### Prototype bugs fixed deliberately
 
@@ -547,33 +577,30 @@ rather than the purple progress bar, because overdue takes precedence.
 Honest list, in the order I would tackle them:
 
 1. **No routing / deep links** (see above).
-2. **Accessibility.** Many interactive elements are `div`s with `onClick`,
-   inherited from the prototype: no keyboard focus, roles or labels. This needs a
-   pass before real users.
-3. **No frontend tests.** The server tests cover money, invoice status, auth,
-   permission redaction and the endpoints; the UI was verified with a scripted
-   browser pass (below) that is not checked in, because it hard-codes this
-   sandbox's Chromium path.
-4. **No email delivery**, so reset links and invitations are handed over by the
+2. **No frontend unit tests.** The server tests cover money, invoice status,
+   auth, permission redaction and the endpoints, and `npm run a11y` drives the
+   real UI in a browser — but there is no component-level test layer, so a
+   rendering regression outside those paths would not be caught.
+3. **No email delivery**, so reset links and invitations are handed over by the
    Owner rather than mailed. That is a deliberate trade — it avoids inventing a
    mail dependency — but it does mean a locked-out person has to reach an Owner
    through some other channel. Wiring up a provider is the natural next step, and
    `createPasswordReset` is the only place that would need to change.
-5. **No MFA.** Password accounts authenticate with a password alone. TOTP is
+4. **No MFA.** Password accounts authenticate with a password alone. TOTP is
    implementable without dependencies; the open questions are policy ones
    (enforced for Owners or optional, recovery codes, lost-device handling), which
    is why it is not bundled in here.
-6. **No pagination.** Fine at seed scale, not at real scale.
-7. **Google sign-in has not been run against real Google credentials.** Every
+5. **No pagination.** Fine at seed scale, not at real scale.
+6. **Google sign-in has not been run against real Google credentials.** Every
    step around it is tested — including signature verification, against a local
    JWKS stub signed with a generated key — but the live token exchange needs a
    Google Cloud OAuth client, which I cannot create. Expect to hit at most a
    redirect-URI mismatch on the first attempt: the error Google shows names the
    exact URI it expected, and it must equal `GOOGLE_REDIRECT_URI` character for
    character.
-8. **Optimistic UI.** Mutations wait for the round trip; on a slow link the app
+7. **Optimistic UI.** Mutations wait for the round trip; on a slow link the app
    feels it.
-9. **Team management stops at add / change access / remove.** Assignments now
+8. **Team management stops at add / change access / remove.** Assignments now
    reference accounts, which is what the missing operations need — renaming a
    teammate, deactivating one without deleting them, and handing their clients
    and tasks to someone else. Each is a Team screen and one endpoint; none of
@@ -583,7 +610,8 @@ Honest list, in the order I would tackle them:
 
 `npm run typecheck`, `npm run build` and `npm test` (266 tests, one skipped
 because the sandbox runs as root and cannot make a directory unwritable) all
-pass.
+pass, as does `npm run a11y` — axe reports **zero violations** on all fourteen
+screens and dialogs it visits, and all twenty-seven keyboard checks pass.
 
 The real-account path was driven in a browser against an empty database: setup
 appears instead of a sign-in form, rejects a short password and a mismatched

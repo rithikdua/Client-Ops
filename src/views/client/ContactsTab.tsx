@@ -38,7 +38,10 @@ export function ContactsTab({ client }: { client: Client }) {
             </span>
             <span>{ct.phone}</span>
             {canWrite ? (
-              <TrashButton onClick={() => actions.removeItem('contacts', client.id, ct.id)} />
+              <TrashButton
+                onClick={() => actions.removeItem('contacts', client.id, ct.id)}
+                label={`Remove contact ${ct.name}`}
+              />
             ) : (
               <span />
             )}

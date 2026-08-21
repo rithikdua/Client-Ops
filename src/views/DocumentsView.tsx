@@ -1,4 +1,4 @@
-import { EmptyRow, PageHeader, TableHead } from '../components/ui';
+import { EmptyRow, PageHeader, RowAction, TableHead } from '../components/ui';
 import type { Client, ClientDocument } from '../data/types';
 import { Chip } from '../ds/Chip';
 import { Icon } from '../ds/Icon';
@@ -32,7 +32,18 @@ export function DocumentsView() {
             style={{ display: 'grid', gridTemplateColumns: GRID }}
             onClick={canOpenClients ? () => actions.openClientTab(client.id, 'documents') : undefined}
           >
-            <span style={{ fontWeight: 600 }}>{client.name}</span>
+            <span style={{ fontWeight: 600 }}>
+              {canOpenClients ? (
+                <RowAction
+                  onClick={() => actions.openClientTab(client.id, 'documents')}
+                  label={`Open ${client.name}, documents`}
+                >
+                  {client.name}
+                </RowAction>
+              ) : (
+                client.name
+              )}
+            </span>
             <span style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
               <Icon name="document" size={15} />
               {doc.name}

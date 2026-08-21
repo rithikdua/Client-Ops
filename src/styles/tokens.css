@@ -25,7 +25,19 @@
   /* Ink / text */
   --ink-1:              #1A1A1A;   /* primary text */
   --ink-2:              #33323A;   /* secondary text */
-  --ink-3:              #8B8C8F;   /* muted */
+  /*
+   * Muted text. The design system shipped this as #8B8C8F, which is 3.36:1 on
+   * white — under the 4.5:1 that WCAG AA asks of body text, and it carries a
+   * lot of real content here: every date, every caption, the industry under a
+   * client's name, "received of ₹59,000". Darkened to 5.24:1 on white and
+   * 4.73:1 on the greyest surface it is used over.
+   *
+   * This is the one place the handed-off palette is altered rather than
+   * reproduced, and it is a deliberate change: it is the difference between
+   * secondary text and unreadable text, and it applies everywhere at once.
+   */
+  --ink-3:              #6B6C70;   /* muted */
+  /* Disabled and decorative only — never load-bearing text, so exempt. */
   --ink-4:              #9B9AA1;   /* disabled */
   --ink-on-brand:       #FFFFFF;
   --ink-on-dark:        #FFFFFF;
@@ -45,10 +57,17 @@
   --border-strong:      #1A1A1A;
 
   /* Semantic */
-  --success:            #27A644;
+  /* Text only, like --danger: #27A644 was 3.17:1 on white. Same hue, 6.03:1. */
+  --success:            #17722C;
   --success-tint:       #DEF2E5;
   --info:               #027BFF;
-  --danger:             #F34129;
+  /*
+   * Used almost entirely as text — overdue dates, outstanding balances, delete
+   * actions — where the design's #F34129 gives 3.75:1 on white. Darkened to
+   * #B3200B (5.56:1), which is the red the error banners already use, so the
+   * app has one red rather than two. Its single non-text use is a 1px border.
+   */
+  --danger:             #B3200B;
   --warning:            #F5A524;
 
   /* Shadow tokens (usage below) */

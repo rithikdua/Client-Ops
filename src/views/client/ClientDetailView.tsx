@@ -1,3 +1,4 @@
+import { useRef } from 'react';
 import type { Client, ClientTabId } from '../../data/types';
 import { Avatar } from '../../ds/Avatar';
 import { Button } from '../../ds/Button';
@@ -31,6 +32,7 @@ const TAB_LABELS: Record<ClientTabId, string> = {
 
 export function ClientDetailView({ client }: { client: Client }) {
   const { state, actions } = useApp();
+  const tabStrip = useRef<HTMLDivElement>(null);
   const { showInvoiceStats, visibleClientTabs, canWrite, access } = useAccess();
 
   // A restricted teammate previewing the account falls back to Overview rather
@@ -68,7 +70,9 @@ export function ClientDetailView({ client }: { client: Client }) {
 
   return (
     <div className="page">
-      <div
+      <button
+        type="button"
+        className="link-button"
         onClick={actions.goClients}
         style={{
           display: 'inline-flex',
@@ -76,29 +80,32 @@ export function ClientDetailView({ client }: { client: Client }) {
           gap: 6,
           color: 'var(--ink-3)',
           fontSize: 13,
-          cursor: 'pointer',
+          fontWeight: 400,
           marginBottom: 16,
         }}
       >
         <Icon name="arrow-left" size={14} />
         All clients
-      </div>
+      </button>
 
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
         <div style={{ display: 'flex', gap: 16, alignItems: 'center' }}>
           <Avatar initials={client.name[0]} size={48} />
           <div>
             <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-              <div
+              {/* This screen has no PageHeader, so the account's name is the
+                  page's heading — it is what the page is about. */}
+              <h1
                 style={{
                   fontFamily: 'var(--font-ui)',
                   fontWeight: 700,
                   fontSize: 26,
                   letterSpacing: '-0.01em',
+                  margin: 0,
                 }}
               >
                 {client.name}
-              </div>
+              </h1>
               <Chip color={healthColor(client.health)}>{client.health}</Chip>
               <Chip color={stageColor(client.stage)}>{client.stage}</Chip>
             </div>
@@ -201,7 +208,16 @@ export function ClientDetailView({ client }: { client: Client }) {
         )}
       </div>
 
+      {/*
+        A real tab widget. These were `div`s, so the only way to reach Invoices
+        or Tasks was to click them — the panels existed but half the record was
+        unreachable without a mouse. One tab stop for the strip, arrows to move
+        between tabs, which is what a keyboard user expects here.
+      */}
       <div
+        role="tablist"
+        aria-label={`${client.name} details`}
+        ref={tabStrip}
         style={{
           display: 'flex',
           gap: 24,
@@ -209,35 +225,51 @@ export function ClientDetailView({ client }: { client: Client }) {
           marginTop: 28,
         }}
       >
-        {visibleClientTabs.map((id) => {
+        {visibleClientTabs.map((id, i) => {
           const active = activeTab === id;
           return (
-            <div
+            <button
               key={id}
+              type="button"
+              role="tab"
+              id={`tab-${id}`}
+              className="tab-button"
+              aria-selected={active}
+              aria-controls={`panel-${id}`}
+              tabIndex={active ? 0 : -1}
               onClick={() => actions.setClientTab(id)}
+              onKeyDown={(e) => {
+                const step = e.key === 'ArrowRight' ? 1 : e.key === 'ArrowLeft' ? -1 : 0;
+                if (!step) return;
+                e.preventDefault();
+                const at = (i + step + visibleClientTabs.length) % visibleClientTabs.length;
+                actions.setClientTab(visibleClientTabs[at]);
+                tabStrip.current?.querySelectorAll('button')[at]?.focus();
+              }}
               style={{
                 padding: '12px 2px',
                 fontSize: 14,
                 fontWeight: active ? 600 : 500,
                 color: active ? 'var(--ink-1)' : 'var(--ink-3)',
                 borderBottom: active ? '2px solid var(--phot-purple)' : '2px solid transparent',
-                cursor: 'pointer',
                 whiteSpace: 'nowrap',
               }}
             >
               {TAB_LABELS[id]}
-            </div>
+            </button>
           );
         })}
       </div>
 
-      {activeTab === 'overview' && <OverviewTab client={client} />}
-      {activeTab === 'contacts' && <ContactsTab client={client} />}
-      {activeTab === 'invoices' && <InvoicesTab client={client} />}
-      {activeTab === 'deliverables' && <DeliverablesTab client={client} />}
-      {activeTab === 'documents' && <DocumentsTab client={client} />}
-      {activeTab === 'tasks' && <TasksTab client={client} />}
-      {activeTab === 'activity' && <ActivityTab client={client} />}
+      <div role="tabpanel" id={`panel-${activeTab}`} aria-labelledby={`tab-${activeTab}`}>
+        {activeTab === 'overview' && <OverviewTab client={client} />}
+        {activeTab === 'contacts' && <ContactsTab client={client} />}
+        {activeTab === 'invoices' && <InvoicesTab client={client} />}
+        {activeTab === 'deliverables' && <DeliverablesTab client={client} />}
+        {activeTab === 'documents' && <DocumentsTab client={client} />}
+        {activeTab === 'tasks' && <TasksTab client={client} />}
+        {activeTab === 'activity' && <ActivityTab client={client} />}
+      </div>
     </div>
   );
 }

@@ -64,7 +64,10 @@ export function DocumentsTab({ client }: { client: Client }) {
             </div>
             <span style={{ whiteSpace: 'nowrap', color: 'var(--ink-3)' }}>{fmtDate(doc.date)}</span>
             {canWrite ? (
-              <TrashButton onClick={() => actions.removeItem('documents', client.id, doc.id)} />
+              <TrashButton
+                onClick={() => actions.removeItem('documents', client.id, doc.id)}
+                label={`Remove document ${doc.name}`}
+              />
             ) : (
               <span />
             )}
