@@ -3,6 +3,8 @@
  *
  *   npm run restore -- <backup-file>
  *   npm run restore -- --latest
+ *   npm run restore -- --list-remote          # what is at BACKUP_DEST
+ *   npm run restore -- --remote <name>        # fetch it from there and restore
  *
  * The half of a backup strategy that usually does not exist until the day it is
  * needed, which is the worst possible day to write it.
@@ -11,16 +13,48 @@
  * anything, and moves the current database aside rather than deleting it — a
  * restore of the wrong file should not be the second disaster of the day.
  */
-import { copyFileSync, existsSync, renameSync, rmSync } from 'node:fs';
+import { copyFileSync, existsSync, mkdtempSync, renameSync, rmSync } from 'node:fs';
 import { createInterface } from 'node:readline/promises';
-import { basename } from 'node:path';
+import { tmpdir } from 'node:os';
+import { basename, join } from 'node:path';
 import { DB_PATH, openDb } from '../src/db/index';
 import { latestBackup, verifyBackup } from '../src/ops/backup';
+import { backupDestination } from '../src/ops/destination';
 
 const args = process.argv.slice(2).filter((a) => a !== '--yes');
 const assumeYes = process.argv.includes('--yes');
 
-const source = args.includes('--latest') ? latestBackup() : args[0];
+// The case this exists for: the machine is gone and the only copy is elsewhere.
+if (args.includes('--list-remote')) {
+  const dest = backupDestination();
+  const stored = await dest.list();
+  if (stored.length === 0) {
+    console.log(`[client-ops] nothing at ${dest.describe}`);
+  } else {
+    console.log(`[client-ops] at ${dest.describe}:`);
+    for (const file of stored) {
+      console.log(`  ${file.name}  ${Math.round(file.bytes / 1024)} KB`);
+    }
+  }
+  process.exit(0);
+}
+
+let source = args.includes('--latest') ? latestBackup() : args[0];
+
+const remoteAt = args.indexOf('--remote');
+if (remoteAt !== -1) {
+  const name = args[remoteAt + 1];
+  if (!name) {
+    console.error('Usage: npm run restore -- --remote <name>   (see --list-remote)');
+    process.exit(1);
+  }
+  const dest = backupDestination();
+  // Into a temporary file first: it still has to pass verification before
+  // anything on this machine is touched.
+  source = join(mkdtempSync(join(tmpdir(), 'client-ops-restore-')), basename(name));
+  await dest.fetch(name, source);
+  console.log(`[client-ops] fetched ${name} from ${dest.describe}`);
+}
 
 if (!source) {
   console.error('Usage: npm run restore -- <backup-file>   (or --latest)');

@@ -28,8 +28,8 @@ after(() => {
 const backupFiles = () => readdirSync(BACKUP_DIR).filter((f) => f.endsWith('.sqlite')).sort();
 
 describe('M-10 the workspace can actually be restored, not just copied', () => {
-  test('a backup is a consistent database, taken while the server is live', () => {
-    const result = backupDatabase(db, new Date('2026-08-20T09:00:00Z'));
+  test('a backup is a consistent database, taken while the server is live', async () => {
+    const result = await backupDatabase(db, new Date('2026-08-20T09:00:00Z'));
     assert.ok(result.bytes > 0);
     assert.match(result.sha256, /^[0-9a-f]{64}$/);
 
@@ -40,7 +40,7 @@ describe('M-10 the workspace can actually be restored, not just copied', () => {
     assert.match(check.detail, /clients=6/);
   });
 
-  test('a backup taken during a write does not lose the write', () => {
+  test('a backup taken during a write does not lose the write', async () => {
     // The reason for VACUUM INTO rather than copying the file: in WAL mode the
     // most recent transactions live in a sidecar, and a byte copy misses them.
     db.prepare(
@@ -48,7 +48,7 @@ describe('M-10 the workspace can actually be restored, not just copied', () => {
        VALUES ('backup-probe', 'Written Just Now', 'Active', 'Live', 'Monthly', '2026-08-20', '2026-08-20T09:00:00Z')`,
     ).run();
 
-    const result = backupDatabase(db, new Date('2026-08-20T10:00:00Z'));
+    const result = await backupDatabase(db, new Date('2026-08-20T10:00:00Z'));
     const restored = openDb(result.path);
     const found = restored
       .prepare("SELECT name FROM clients WHERE id = 'backup-probe'")
@@ -77,9 +77,9 @@ describe('M-10 the workspace can actually be restored, not just copied', () => {
     assert.match(check.detail, /users=0/, 'but the counts show it holds nothing');
   });
 
-  test('retention keeps the newest and removes the rest', () => {
+  test('retention keeps the newest and removes the rest', async () => {
     for (const hour of [11, 12, 13, 14, 15]) {
-      backupDatabase(db, new Date(`2026-08-20T${hour}:00:00Z`));
+      await backupDatabase(db, new Date(`2026-08-20T${hour}:00:00Z`));
     }
     const kept = backupFiles();
     assert.equal(kept.length, 3, 'BACKUP_KEEP=3');

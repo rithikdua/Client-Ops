@@ -115,7 +115,7 @@ npm run uploads:gc # delete uploaded files nothing references any more
 npm run purge-archived # DESTRUCTIVE: permanently remove long-archived records
 npm run audit      # print the audit trail (--limit, --action 'team.*', --json)
 npm run backup     # verified snapshot of the database (--list to see them)
-npm run restore    # put one back:  npm run restore -- --latest
+npm run restore    # put one back: --latest, or --remote <name> from BACKUP_DEST
 npm run maintenance # one pass: backup, verify, prune, sweep orphans
 npm run a11y       # accessibility audit against a running app (see below)
 ```
@@ -256,6 +256,16 @@ value with the next billing countdown, outstanding balance and open deliverables
   dialog traps focus, closes on Escape and hands focus back; tabs and the
   segmented toggles are one tab stop with arrow-key movement; and the focus ring
   is drawn rather than suppressed. `npm run a11y` proves it — see below.
+- **A backup can leave the machine** (`server/src/ops/destination.ts`).
+  `VACUUM INTO` gives a consistent snapshot, which was only half the problem: it
+  wrote next to the database, so the copy you would restore from sat on the disk
+  it existed to protect against. `BACKUP_DEST` sends every snapshot somewhere
+  else and re-hashes it on arrival — copied under a temporary name and renamed
+  only once verified, so a half-written file is never mistaken for a backup. A
+  destination on the *same filesystem* as the database is refused by default,
+  because a "remote" path that turns out to be a subdirectory of the data volume
+  is worse than no backup: it looks like one. `npm run restore -- --list-remote`
+  and `--remote <name>` bring one back when the machine itself is gone.
 - **The snapshot costs a fixed number of queries, whatever the workspace holds.**
   Each collection used to be fetched per client, so a snapshot of 206 accounts
   ran 2,274 prepared statements and 606 ran 6,674 — on *every mutation*, because
@@ -670,7 +680,7 @@ Honest list, in the order I would tackle them:
 
 ## Verified
 
-`npm run typecheck`, `npm run build` and `npm test` (304 tests, one skipped
+`npm run typecheck`, `npm run build` and `npm test` (314 tests, one skipped
 because the sandbox runs as root and cannot make a directory unwritable) all
 pass, as does `npm run a11y` — axe reports **zero violations** on all fourteen
 screens and dialogs it visits, and all twenty-seven keyboard checks pass.
@@ -715,6 +725,14 @@ The migration was also run against the pre-existing development database rather
 than only a fresh seed — all 23 assignments across clients, deliverables, tasks
 and follow-ups linked to accounts on upgrade, and the later idempotency columns
 were added to that same database on the next start.
+
+Off-host backup was exercised as a real recovery, not just a copy: a backup was
+sent to a configured destination, then the database *and every local backup*
+were deleted, and `npm run restore -- --remote` brought the workspace back —
+6 clients, 11 invoices, 4 accounts. Pointing `BACKUP_DEST` at the same
+filesystem is refused with an explanation, and the local snapshot is still
+written when the destination cannot be reached, with the failure logged rather
+than swallowed.
 
 Scaling was measured rather than assumed, on a generated workspace of 606
 accounts with their invoices, payments, deliverables, documents, tasks, contacts

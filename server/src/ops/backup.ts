@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import Database from 'better-sqlite3';
 import { envNumber, envString } from '../config';
 import { DB_PATH, type Db } from '../db/index';
+import { backupDestination, DEST_KEEP } from './destination';
 
 /**
  * Backups of the one file that holds everything.
@@ -18,6 +19,12 @@ import { DB_PATH, type Db } from '../db/index';
  * its most recent transactions, or an unopenable one. `VACUUM INTO` asks SQLite
  * itself for a consistent, fully-checkpointed snapshot while the server keeps
  * serving.
+ *
+ * That gets a good copy. Where it goes is the other half, and for a long time
+ * this got it wrong: `VACUUM INTO` wrote next to the database, so the copy you
+ * would restore from sat on the disk it existed to protect against. Set
+ * `BACKUP_DEST` and every snapshot is also sent somewhere else, verified by
+ * digest on arrival — see `ops/destination.ts`.
  */
 
 export const BACKUP_DIR = envString('BACKUP_DIR', join(DB_PATH, '..', 'backups'));
@@ -30,6 +37,8 @@ export interface BackupResult {
   bytes: number;
   sha256: string;
   removed: string[];
+  /** Where the copy went, and whether it got there. */
+  destination: { describe: string; sent: boolean; removed: string[]; error?: string };
 }
 
 /** `client-ops-2026-08-20T08-30-00Z.sqlite` — sorts chronologically as text. */
@@ -46,7 +55,7 @@ function sha256(path: string): string {
  * Writes a consistent snapshot and prunes old ones. Safe to run against a live
  * database — that is the entire point of doing it this way.
  */
-export function backupDatabase(db: Db, at: Date = new Date()): BackupResult {
+export async function backupDatabase(db: Db, at: Date = new Date()): Promise<BackupResult> {
   mkdirSync(BACKUP_DIR, { recursive: true });
   const target = join(BACKUP_DIR, backupName(at));
   if (existsSync(target)) rmSync(target);
@@ -55,13 +64,33 @@ export function backupDatabase(db: Db, at: Date = new Date()): BackupResult {
   // configuration rather than a request, but quote it properly anyway.
   db.exec(`VACUUM INTO '${target.replace(/'/g, "''")}'`);
 
-  const result: BackupResult = {
+  const digest = sha256(target);
+  const dest = backupDestination();
+
+  // Sending is best-effort *for the caller*, but never silent: a backup that
+  // did not reach its destination is reported as such, so the maintenance log
+  // and the operator both know the off-host copy is missing. Throwing here
+  // would discard a perfectly good local snapshot over a network problem.
+  let sent = false;
+  let removed: string[] = [];
+  let error: string | undefined;
+  if (!dest.isLocalOnly) {
+    try {
+      await dest.send(target, backupName(at), digest);
+      sent = true;
+      removed = await dest.prune(DEST_KEEP);
+    } catch (err) {
+      error = err instanceof Error ? err.message : String(err);
+    }
+  }
+
+  return {
     path: target,
     bytes: statSync(target).size,
-    sha256: sha256(target),
+    sha256: digest,
     removed: prune(),
+    destination: { describe: dest.describe, sent, removed, ...(error ? { error } : {}) },
   };
-  return result;
 }
 
 /** Removes all but the newest BACKUP_KEEP snapshots. */

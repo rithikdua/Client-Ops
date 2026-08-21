@@ -33,7 +33,7 @@ if (list) {
 }
 
 const db = openDb();
-const result = backupDatabase(db);
+const result = await backupDatabase(db);
 const check = verifyBackup(result.path);
 db.close();
 

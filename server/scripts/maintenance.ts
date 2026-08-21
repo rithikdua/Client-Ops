@@ -11,5 +11,5 @@ import { openDb } from '../src/db/index';
 import { runMaintenance } from '../src/ops/scheduler';
 
 const db = openDb();
-runMaintenance(db);
+await runMaintenance(db);
 db.close();

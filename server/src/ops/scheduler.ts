@@ -41,9 +41,9 @@ export function maintenanceOptions(): MaintenanceOptions {
 }
 
 /** One maintenance pass. Exported so the CLI and the tests run the same thing. */
-export function runMaintenance(db: Db, options = maintenanceOptions()): void {
+export async function runMaintenance(db: Db, options = maintenanceOptions()): Promise<void> {
   try {
-    const result = backupDatabase(db);
+    const result = await backupDatabase(db);
     const check = verifyBackup(result.path);
     // Verifying every time is the point: a backup nobody has opened is a
     // hypothesis, and the day you need it is the worst time to test it.
@@ -54,6 +54,18 @@ export function runMaintenance(db: Db, options = maintenanceOptions()): void {
       );
     } else {
       console.error(`[client-ops] BACKUP IS NOT USABLE: ${result.path} — ${check.detail}`);
+    }
+
+    // Said every time, either way. A backup that never left the machine is the
+    // failure this exists to prevent, and it is silent unless something says so.
+    const dest = result.destination;
+    if (dest.error) {
+      console.error(`[client-ops] BACKUP DID NOT REACH ${dest.describe}: ${dest.error}`);
+    } else if (dest.sent) {
+      console.log(
+        `[client-ops] copied off-host to ${dest.describe}` +
+          (dest.removed.length ? `, pruned ${dest.removed.length} there` : ''),
+      );
     }
   } catch (err) {
     console.error('[client-ops] backup failed:', err instanceof Error ? err.message : err);
