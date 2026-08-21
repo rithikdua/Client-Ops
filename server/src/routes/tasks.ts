@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { requireSection, requireWrite } from '../auth/permissions';
 import { newId, transact, type Db } from '../db/index';
 import { logSystemActivity } from '../domain/activity';
+import { mentionsAssignment, resolveAssignment } from '../domain/assignees';
 import { bumpVersion } from '../domain/versions';
 import { audit } from '../domain/audit';
 import { notFound } from '../http/errors';
@@ -24,18 +25,25 @@ export function taskRoutes(db: Db): Router {
     const { clientId } = req.params as { clientId: string };
     assertClient(db, clientId);
     const input = taskSchema.parse(req.body);
+    // Unassigned tickets default to whoever raised them, as before — but now as
+    // an account rather than a copy of their name.
+    const assignee = resolveAssignment(db, {
+      userId: input.assigneeUserId,
+      name: input.assignee || req.actor!.name,
+    });
     const id = newId();
 
     transact(db, () => {
       db.prepare(
-        `INSERT INTO tasks (id, client_id, title, description, assignee, status, priority, due_date, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO tasks (id, client_id, title, description, assignee, assignee_user_id, status, priority, due_date, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       ).run(
         id,
         clientId,
         input.title,
         input.description,
-        input.assignee || req.actor!.name,
+        assignee.name,
+        assignee.userId,
         input.status,
         input.priority,
         input.dueDate ?? '',
@@ -59,7 +67,7 @@ export function taskRoutes(db: Db): Router {
     const map: Record<string, string> = {
       title: 'title',
       description: 'description',
-      assignee: 'assignee',
+      // `assignee` is set through the resolver below, not by this map.
       status: 'status',
       priority: 'priority',
       dueDate: 'due_date',
@@ -68,6 +76,15 @@ export function taskRoutes(db: Db): Router {
     for (const [key, column] of Object.entries(map)) {
       const value = (input as Record<string, unknown>)[key];
       if (value !== undefined) columns[column] = value;
+    }
+
+    if (mentionsAssignment({ userId: input.assigneeUserId, name: input.assignee })) {
+      const assignee = resolveAssignment(db, {
+        userId: input.assigneeUserId,
+        name: input.assignee,
+      });
+      columns.assignee = assignee.name;
+      columns.assignee_user_id = assignee.userId;
     }
 
     transact(db, () => {

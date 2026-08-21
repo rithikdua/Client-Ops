@@ -3,6 +3,7 @@ import { countUsers } from '../auth/accounts';
 import { hashPassword } from '../auth/passwords';
 import { toMinor } from '../money';
 import { envString } from '../config';
+import { linkAssignmentsByName } from '../domain/assignees';
 import { newId, transact, type Db } from './index';
 import { TEAM_SEED, seedClients, seedFollowUps } from './seedData';
 
@@ -195,6 +196,11 @@ export function seedDemoWorkspace(db: Db, opts: { password?: string } = {}): voi
         now,
       );
     }
+
+    // The fixtures are written with names, as a real workspace's history is.
+    // Linking them here means a fresh demo is joined up from the start, through
+    // exactly the same pass that upgrades an existing database.
+    linkAssignmentsByName(db);
   });
 }
 

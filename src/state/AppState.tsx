@@ -452,9 +452,13 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
   }, [applySnapshot, patch]);
 
   const actions = useMemo<AppActions>(() => {
-    const firstTeamName = () => {
+    /**
+     * Who a new record is assigned to by default: the signed-in account. The id,
+     * not the name — the name is only ever a label now.
+     */
+    const defaultAssigneeId = () => {
       const s = stateRef.current;
-      return s.me?.name ?? (s.team[0] ? s.team[0].name : '');
+      return s.me?.id ?? (s.team[0] ? s.team[0].id : '');
     };
     const clientById = (id: string | undefined) =>
       stateRef.current.clients.find((c) => c.id === id);
@@ -625,7 +629,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
             form: {
               name: '',
               industry: '',
-              owner: firstTeamName(),
+              ownerUserId: defaultAssigneeId(),
               health: 'Active',
               stage: 'Onboarding',
               billingCycle: 'Monthly',
@@ -665,7 +669,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
           form: {
             name: client.name,
             industry: client.industry,
-            owner: client.owner,
+            ownerUserId: client.ownerUserId ?? '',
             health: client.health,
             stage: client.stage,
             billingCycle: client.billingCycle,
@@ -735,7 +739,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
           form: {
             title: '',
             description: '',
-            owner: firstTeamName(),
+            ownerUserId: defaultAssigneeId(),
             dueDate: '',
             status: 'Not started',
             fileName: '',
@@ -781,7 +785,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
             phone: '',
             relatedClientId: '',
             reason: '',
-            owner: firstTeamName(),
+            ownerUserId: defaultAssigneeId(),
             dueDate: todayISO(),
           },
         }),
@@ -800,7 +804,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
               phone: f.phone || '',
               relatedClientId: f.relatedClientId || '',
               reason: f.reason,
-              owner: f.owner,
+              ownerUserId: f.ownerUserId ?? '',
               dueDate: f.dueDate,
             },
           },
@@ -821,7 +825,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
           clientId,
           form: {
             title: '',
-            assignee: firstTeamName(),
+            assigneeUserId: defaultAssigneeId(),
             description: '',
             status: 'New',
             priority: 'Medium',
@@ -840,7 +844,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
           version: task.version,
           form: {
             title: task.title,
-            assignee: task.assignee || firstTeamName(),
+            assigneeUserId: task.assigneeUserId ?? defaultAssigneeId(),
             description: task.description || '',
             status: task.status || 'New',
             priority: task.priority || 'Medium',
@@ -951,7 +955,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
             const body: Record<string, unknown> = {
               name: f.name || 'Untitled client',
               industry: f.industry ?? '',
-              owner: f.owner ?? '',
+              ownerUserId: f.ownerUserId ?? '',
               health: f.health ?? 'Active',
               stage: f.stage ?? 'Onboarding',
               currency: f.currency ?? 'INR',
@@ -1069,7 +1073,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
                   {
                     title: f.title ?? '',
                     description: f.description ?? '',
-                    owner: f.owner ?? '',
+                    ownerUserId: f.ownerUserId ?? '',
                     dueDate: f.dueDate || todayISO(),
                     status: f.status ?? 'Not started',
                     ...fileFields(f),
@@ -1109,7 +1113,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
             const body = {
               title: f.title ?? '',
               description: f.description ?? '',
-              assignee: f.assignee ?? '',
+              assigneeUserId: f.assigneeUserId ?? '',
               status: f.status ?? 'New',
               priority: f.priority ?? 'Medium',
               dueDate: f.dueDate || '',
@@ -1155,7 +1159,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
               phone: f.phone ?? '',
               relatedClientId: f.relatedClientId ?? '',
               reason: f.reason ?? '',
-              owner: f.owner ?? '',
+              ownerUserId: f.ownerUserId ?? '',
               dueDate: f.dueDate || todayISO(),
             };
             void run(

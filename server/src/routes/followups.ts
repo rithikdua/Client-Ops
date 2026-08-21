@@ -3,6 +3,7 @@ import { requireSection, requireWrite } from '../auth/permissions';
 import { newId, transact, type Db } from '../db/index';
 import { addDaysISO, todayISO } from '../domain/activity';
 import { audit } from '../domain/audit';
+import { resolveAssignment } from '../domain/assignees';
 import { bumpVersion } from '../domain/versions';
 import { notFound } from '../http/errors';
 import { completeFollowUpSchema, followUpSchema } from '../http/validate';
@@ -18,10 +19,16 @@ export function followUpRoutes(db: Db): Router {
 
   router.post('/', requireWrite, (req, res) => {
     const input = followUpSchema.parse(req.body);
+    // An unowned follow-up belongs to whoever created it.
+    const owner = resolveAssignment(db, {
+      userId: input.ownerUserId,
+      name: input.owner || req.actor!.name,
+    });
     db.prepare(
       `INSERT INTO follow_ups (
-         id, name, company_name, email, phone, related_client_id, reason, owner, due_date, status, created_at
-       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'Pending', ?)`,
+         id, name, company_name, email, phone, related_client_id, reason, owner, owner_user_id,
+         due_date, status, created_at
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'Pending', ?)`,
     ).run(
       newId(),
       input.name,
@@ -30,7 +37,8 @@ export function followUpRoutes(db: Db): Router {
       input.phone,
       input.relatedClientId || null,
       input.reason,
-      input.owner || req.actor!.name,
+      owner.name,
+      owner.userId,
       input.dueDate,
       new Date().toISOString(),
     );
@@ -44,10 +52,11 @@ export function followUpRoutes(db: Db): Router {
     }
     const input = followUpSchema.parse(req.body);
     bumpVersion(db, 'follow_ups', followUpId, input.version);
+    const owner = resolveAssignment(db, { userId: input.ownerUserId, name: input.owner });
     db.prepare(
       `UPDATE follow_ups SET
          name = ?, company_name = ?, email = ?, phone = ?, related_client_id = ?,
-         reason = ?, owner = ?, due_date = ?
+         reason = ?, owner = ?, owner_user_id = ?, due_date = ?
        WHERE id = ?`,
     ).run(
       input.name,
@@ -56,7 +65,8 @@ export function followUpRoutes(db: Db): Router {
       input.phone,
       input.relatedClientId || null,
       input.reason,
-      input.owner,
+      owner.name,
+      owner.userId,
       input.dueDate,
       followUpId,
     );

@@ -22,6 +22,7 @@ import {
   FieldRow,
   FormSection,
   SelectField,
+  teamOptions,
   TextAreaField,
   TextField,
   useModalForm,
@@ -142,7 +143,7 @@ export function DeliverableForm() {
       <TextField label="Title" k="title" />
       <TextField label="Description" k="description" />
       <FieldRow>
-        <SelectField label="Owner" k="owner" options={state.team.map((t) => t.name)} style={HALF} />
+        <SelectField label="Owner" k="ownerUserId" options={teamOptions(state.team)} style={HALF} />
         <TextField label="Due date" k="dueDate" type="date" style={HALF} />
       </FieldRow>
       <SelectField label="Status" k="status" options={DELIVERABLE_STATUS_OPTIONS} />
@@ -173,7 +174,7 @@ export function FollowUpForm() {
       />
       <TextField label="Reason" k="reason" placeholder="e.g. First outreach after inbound request" />
       <FieldRow>
-        <SelectField label="Owner" k="owner" options={state.team.map((t) => t.name)} style={HALF} />
+        <SelectField label="Owner" k="ownerUserId" options={teamOptions(state.team)} style={HALF} />
         <TextField label="Due date" k="dueDate" type="date" style={HALF} />
       </FieldRow>
     </>
@@ -415,7 +416,7 @@ export function TaskForm({ ticketKey }: { ticketKey: string }) {
         placeholder="Any detail the assignee needs"
       />
       <FieldRow>
-        <SelectField label="Assignee" k="assignee" options={state.team.map((t) => t.name)} style={HALF} />
+        <SelectField label="Assignee" k="assigneeUserId" options={teamOptions(state.team)} style={HALF} />
         <SelectField label="Priority" k="priority" options={PRIORITY_OPTIONS} style={HALF} />
       </FieldRow>
       <FieldRow>

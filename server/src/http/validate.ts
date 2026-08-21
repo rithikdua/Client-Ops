@@ -63,10 +63,17 @@ export const loginSchema = z.object({
  */
 const version = z.number().int().min(0).optional();
 
+/**
+ * The account an assignment points at. Optional: a request may send the name
+ * instead (scripts, the CLI) and the server links it where it can.
+ */
+const assigneeId = text(60).optional();
+
 const clientFields = z.object({
   name: text(200).min(1, 'A client name is required.'),
   industry: text(200).default(''),
   owner: text(120).default(''),
+  ownerUserId: assigneeId,
   health: enumOf(HEALTH_OPTIONS),
   stage: enumOf(STAGE_OPTIONS),
   currency: currency.default('INR'),
@@ -203,6 +210,7 @@ export const deliverableSchema = z.object({
   title: text(300).min(1, 'A title is required.'),
   description: text(2000).default(''),
   owner: text(120).default(''),
+  ownerUserId: assigneeId,
   dueDate: isoDate,
   status: enumOf(DELIVERABLE_STATUS_OPTIONS).default('Not started'),
   fileName: text(300).default(''),
@@ -232,6 +240,7 @@ export const taskSchema = z.object({
   title: text(300).min(1, 'A ticket title is required.'),
   description: text(4000).default(''),
   assignee: text(120).default(''),
+  assigneeUserId: assigneeId,
   status: enumOf(TASK_STATUS_OPTIONS).default('New'),
   priority: enumOf(PRIORITY_OPTIONS).default('Medium'),
   dueDate: optionalDate,
@@ -259,6 +268,7 @@ export const followUpSchema = z.object({
   relatedClientId: text(60).default(''),
   reason: text(2000).default(''),
   owner: text(120).default(''),
+  ownerUserId: assigneeId,
   dueDate: isoDate,
   version,
 });

@@ -9,14 +9,15 @@ import type { CurrencyCode } from '../../data/types';
 import { CURRENCY_OPTIONS } from '../../lib/money';
 import { useApp } from '../../state/AppState';
 import { GstFields } from './GstFields';
-import { FormSection, SelectField, TextAreaField, TextField, useModalForm } from './fields';
+import { FormSection, SelectField,
+  teamOptions, TextAreaField, TextField, useModalForm } from './fields';
 
 const SPAN = { gridColumn: '1/-1' } as const;
 
 export function ClientForm({ isNew }: { isNew: boolean }) {
   const { state, actions } = useApp();
   const { form } = useModalForm();
-  const teamOptions = state.team.map((t) => t.name);
+  const owners = teamOptions(state.team);
   const currency = (form.currency as CurrencyCode) || 'INR';
 
   // Typing a contact name that already exists elsewhere offers to reuse it,
@@ -35,7 +36,7 @@ export function ClientForm({ isNew }: { isNew: boolean }) {
       <TextField label="Brand / short name" k="name" placeholder="Acme Corp" />
       <TextField label="Legal name" k="legalName" placeholder="Acme Corporation Pvt. Ltd." />
       <TextField label="Industry" k="industry" placeholder="Retail & e-commerce" />
-      <SelectField label="Account owner" k="owner" options={teamOptions} />
+      <SelectField label="Account owner" k="ownerUserId" options={owners} />
       <SelectField label="Health" k="health" options={HEALTH_OPTIONS} />
       <SelectField label="Onboarding stage" k="stage" options={STAGE_OPTIONS} />
       <TextField label="Onboarding date" k="onboardingDate" type="date" />

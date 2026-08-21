@@ -79,6 +79,18 @@ export function TextAreaField({
   );
 }
 
+/**
+ * Teammates as an assignment dropdown: the account is the value, the name is
+ * only what gets shown. Storing the label was the whole problem — a rename left
+ * every past assignment pointing at a string nobody maintains.
+ */
+export function teamOptions(team: { id: string; name: string }[]) {
+  return [
+    { value: '', label: 'Unassigned' },
+    ...team.map((t) => ({ value: t.id, label: t.name })),
+  ];
+}
+
 export function SelectField({
   label,
   k,

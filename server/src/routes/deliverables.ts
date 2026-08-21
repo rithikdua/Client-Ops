@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { requireSection, requireWrite } from '../auth/permissions';
 import { newId, transact, type Db } from '../db/index';
 import { logSystemActivity } from '../domain/activity';
+import { resolveAssignment } from '../domain/assignees';
 import { bumpVersion } from '../domain/versions';
 import { audit } from '../domain/audit';
 import { notFound } from '../http/errors';
@@ -16,17 +17,20 @@ export function deliverableRoutes(db: Db): Router {
     const { clientId } = req.params as { clientId: string };
     assertClient(db, clientId);
     const input = deliverableSchema.parse(req.body);
+    const owner = resolveAssignment(db, { userId: input.ownerUserId, name: input.owner });
+
     transact(db, () => {
       db.prepare(
         `INSERT INTO deliverables (
-           id, client_id, title, description, owner, due_date, status, file_name, file_url, created_at
-         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+           id, client_id, title, description, owner, owner_user_id, due_date, status, file_name, file_url, created_at
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       ).run(
         newId(),
         clientId,
         input.title,
         input.description,
-        input.owner,
+        owner.name,
+        owner.userId,
         input.dueDate,
         input.status,
         input.fileName || null,
