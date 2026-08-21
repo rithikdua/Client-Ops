@@ -6,6 +6,7 @@ import type { Db } from './db/index';
 import { errorHandler, HttpError } from './http/errors';
 import { healthRoutes } from './http/health';
 import { idempotency } from './http/idempotency';
+import { archiveRoutes } from './routes/archive';
 import { serveStaticApp } from './http/static';
 import { rejectCrossSiteWrites, securityHeaders } from './http/security';
 import { activityRoutes } from './routes/activity';
@@ -70,6 +71,7 @@ export function createApp(db: Db): Express {
   app.use('/api/contacts', gate, globalContactRoutes(db));
   app.use('/api/team', gate, teamRoutes(db));
   app.use('/api/followups', gate, followUpRoutes(db));
+  app.use('/api/archive', gate, archiveRoutes(db));
 
   app.use('/api', (_req, _res, next) => {
     next(new HttpError(404, 'Unknown endpoint.'));

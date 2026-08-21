@@ -12,6 +12,7 @@ import {
 import { api, ApiError, type Me, type Snapshot } from '../api/client';
 import { ALL_ACCESS, DELIVERABLE_CYCLE, NAV_ORDER } from '../data/options';
 import type {
+  ArchivedRecord,
   Access,
   AttachedFile,
   Client,
@@ -69,6 +70,16 @@ export interface AppStateShape {
   clientTabId: ClientTabId;
   search: string;
   healthFilter: Health | 'all';
+  /**
+   * Whether the Clients screen is showing live accounts or archived ones.
+   *
+   * Archived records are not in the snapshot at all — the server does not send
+   * them — so this decides whether the screen renders `clients` or `archived`.
+   */
+  clientsTab: 'active' | 'archived';
+  /** What has been archived, fetched on demand rather than with every snapshot. */
+  archived: ArchivedRecord[];
+  archivedLoading: boolean;
   sortBy: SortBy;
   invoiceSearch: string;
   invoiceStatusFilter: InvoiceStatusFilter;
@@ -125,6 +136,9 @@ const initialState = (): AppStateShape => ({
   clientTabId: 'overview',
   search: '',
   healthFilter: 'all',
+  clientsTab: 'active',
+  archived: [],
+  archivedLoading: false,
   sortBy: 'name',
   invoiceSearch: '',
   invoiceStatusFilter: 'all',
@@ -173,6 +187,10 @@ export interface AppActions {
 
   setSearch: (v: string) => void;
   setHealthFilter: (v: Health | 'all') => void;
+  setClientsTab: (tab: 'active' | 'archived') => void;
+  /** Loads the archive for a client, or for the workspace when given nothing. */
+  loadArchived: (clientId?: string) => void;
+  restoreArchived: (type: string, id: string) => void;
   setSortBy: (v: SortBy) => void;
   setInvoiceSearch: (v: string) => void;
   setInvoiceStatusFilter: (v: InvoiceStatusFilter) => void;
@@ -342,6 +360,26 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
    * Runs a mutation: marks the app busy, applies the returned snapshot, and
    * turns failures into a visible message instead of a silent no-op.
    */
+  /**
+   * Loads the archive. Separate from `run` because it is a read: it must not
+   * take the one-mutation-at-a-time lock, and it returns no snapshot.
+   */
+  const fetchArchived = useCallback(
+    async (clientId?: string) => {
+      patch({ archivedLoading: true });
+      try {
+        const result = await api.listArchived(clientId ? { clientId } : {});
+        patch({ archived: result.archived, archivedLoading: false });
+      } catch (err) {
+        patch({
+          archivedLoading: false,
+          error: err instanceof Error ? err.message : 'Could not load the archive.',
+        });
+      }
+    },
+    [patch],
+  );
+
   const run = useCallback(
     async (
       fn: () => Promise<Snapshot>,
@@ -582,6 +620,22 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
 
       setSearch: (search) => patch({ search }),
       setHealthFilter: (healthFilter) => patch({ healthFilter }),
+      setClientsTab: (clientsTab) => {
+        patch({ clientsTab });
+        // Fetched when the tab is opened rather than with every snapshot: the
+        // archive is usually empty and always uninteresting until asked for.
+        if (clientsTab === 'archived') void fetchArchived();
+      },
+      loadArchived: (clientId) => void fetchArchived(clientId),
+      restoreArchived: (type, id) => {
+        void run(() => api.restoreArchived(type, id)).then(() =>
+          // The row is back in the snapshot now, so the list it came from is one
+          // item out of date.
+          fetchArchived(
+            stateRef.current.view === 'client' ? (stateRef.current.selectedId ?? undefined) : undefined,
+          ),
+        );
+      },
       setSortBy: (sortBy) => patch({ sortBy }),
       setInvoiceSearch: (invoiceSearch) => patch({ invoiceSearch }),
       setInvoiceStatusFilter: (invoiceStatusFilter) => patch({ invoiceStatusFilter }),

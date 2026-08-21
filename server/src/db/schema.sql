@@ -99,6 +99,9 @@ CREATE TABLE IF NOT EXISTS clients (
   -- Bumped on every edit, so a stale write can be refused rather than
   -- silently overwriting someone else's. See domain/versions.ts.
   version              INTEGER NOT NULL DEFAULT 1,
+  -- Set when the record is archived. Every read filters on it; nothing is
+  -- destroyed until someone explicitly purges. See domain/archive.ts.
+  archived_at          TEXT,
   created_at           TEXT NOT NULL
 );
 
@@ -108,7 +111,8 @@ CREATE TABLE IF NOT EXISTS contacts (
   name      TEXT NOT NULL,
   role      TEXT NOT NULL DEFAULT '',
   email     TEXT NOT NULL DEFAULT '',
-  phone     TEXT NOT NULL DEFAULT ''
+  phone     TEXT NOT NULL DEFAULT '',
+  archived_at TEXT
 );
 
 CREATE INDEX IF NOT EXISTS idx_contacts_client ON contacts(client_id);
@@ -124,10 +128,13 @@ CREATE TABLE IF NOT EXISTS invoices (
   gst_mode          TEXT NOT NULL DEFAULT 'excluded' CHECK (gst_mode IN ('excluded', 'included')),
   issue_date        TEXT NOT NULL,
   due_date          TEXT NOT NULL,
+  archived_at       TEXT,
   created_at        TEXT NOT NULL
 );
 
 CREATE INDEX IF NOT EXISTS idx_invoices_client ON invoices(client_id);
+-- Every read filters on archived_at, so it belongs in the index it filters with.
+CREATE INDEX IF NOT EXISTS idx_invoices_live ON invoices(client_id, archived_at);
 
 -- The unique (client_id, number) index is created in code, not here: this file
 -- runs on every open, and an existing database that already contains duplicates
@@ -160,10 +167,12 @@ CREATE TABLE IF NOT EXISTS deliverables (
   -- Bumped on every edit, so a stale write can be refused rather than
   -- silently overwriting someone else's. See domain/versions.ts.
   version              INTEGER NOT NULL DEFAULT 1,
+  archived_at TEXT,
   created_at  TEXT NOT NULL
 );
 
 CREATE INDEX IF NOT EXISTS idx_deliverables_client ON deliverables(client_id);
+CREATE INDEX IF NOT EXISTS idx_deliverables_live ON deliverables(client_id, archived_at);
 
 CREATE TABLE IF NOT EXISTS documents (
   id         TEXT PRIMARY KEY,
@@ -173,6 +182,7 @@ CREATE TABLE IF NOT EXISTS documents (
   date       TEXT NOT NULL,
   -- The file itself is a row in `attachments`; a document has exactly one.
   source     TEXT NOT NULL DEFAULT 'us' CHECK (source IN ('us', 'client')),
+  archived_at TEXT,
   created_at TEXT NOT NULL
 );
 
@@ -204,10 +214,12 @@ CREATE TABLE IF NOT EXISTS tasks (
   -- Bumped on every edit, so a stale write can be refused rather than
   -- silently overwriting someone else's. See domain/versions.ts.
   version              INTEGER NOT NULL DEFAULT 1,
+  archived_at TEXT,
   created_at  TEXT NOT NULL
 );
 
 CREATE INDEX IF NOT EXISTS idx_tasks_client ON tasks(client_id);
+CREATE INDEX IF NOT EXISTS idx_tasks_live ON tasks(client_id, archived_at);
 
 -- Every file or link attached to anything, in one place.
 --
@@ -266,6 +278,7 @@ CREATE TABLE IF NOT EXISTS follow_ups (
   -- Bumped on every edit, so a stale write can be refused rather than
   -- silently overwriting someone else's. See domain/versions.ts.
   version              INTEGER NOT NULL DEFAULT 1,
+  archived_at       TEXT,
   created_at        TEXT NOT NULL
 );
 

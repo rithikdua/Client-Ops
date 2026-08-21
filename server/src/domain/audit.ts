@@ -18,6 +18,9 @@ export type AuditAction =
   | 'auth.setup'
   | 'auth.preview_start'
   | 'auth.preview_stop'
+  // Since v14 a delete archives the row rather than destroying it, so these
+  // record an intent that is now reversible. The name is kept because it is
+  // what the person did, and because renaming would orphan existing history.
   | 'client.delete'
   | 'contact.delete'
   | 'task.delete'
@@ -27,6 +30,13 @@ export type AuditAction =
   | 'invoice.file_delete'
   | 'payment.delete'
   | 'followup.delete'
+  | 'client.restore'
+  | 'contact.restore'
+  | 'task.restore'
+  | 'deliverable.restore'
+  | 'document.restore'
+  | 'invoice.restore'
+  | 'followup.restore'
   | 'team.add'
   | 'team.remove'
   | 'team.access_change'

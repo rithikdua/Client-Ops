@@ -9,6 +9,7 @@ import { notFound } from '../http/errors';
 import { taskPatchSchema, taskSchema } from '../http/validate';
 import { addAttachment, clearAttachments } from '../domain/attachments';
 import { assertClient, snapshotFor } from './clients';
+import { archiveRow } from '../domain/archive';
 
 function replaceAttachments(db: Db, taskId: string, urls: string[]): void {
   clearAttachments(db, { taskId });
@@ -18,6 +19,16 @@ function replaceAttachments(db: Db, taskId: string, urls: string[]): void {
 export function taskRoutes(db: Db): Router {
   const router = Router({ mergeParams: true });
   router.use(requireSection('clients'));
+  // Every route below belongs to a client, so the client has to exist and be
+  // live. On the mount rather than in each handler: several of these used to
+  // rely on their own `WHERE client_id = ?` lookups, which check the row is in
+  // the right account but not that the account is still there — so an archived
+  // client's tasks stayed editable through a URL somebody had open.
+  router.use((req, _res, next) => {
+    assertClient(db, (req.params as { clientId: string }).clientId);
+    next();
+  });
+
 
   router.post('/', requireWrite, (req, res) => {
     const { clientId } = req.params as { clientId: string };
@@ -57,7 +68,9 @@ export function taskRoutes(db: Db): Router {
   router.patch('/:taskId', requireWrite, (req, res) => {
     const { clientId, taskId } = req.params as { clientId: string; taskId: string };
     const existing = db
-      .prepare('SELECT id, title, status FROM tasks WHERE id = ? AND client_id = ?')
+      .prepare(
+        'SELECT id, title, status FROM tasks WHERE id = ? AND client_id = ? AND archived_at IS NULL',
+      )
       .get(taskId, clientId) as { id: string; title: string; status: string } | undefined;
     if (!existing) throw notFound('Task');
 
@@ -112,12 +125,12 @@ export function taskRoutes(db: Db): Router {
     const { clientId, taskId } = req.params as { clientId: string; taskId: string };
     assertClient(db, clientId);
     const existing = db
-      .prepare('SELECT title FROM tasks WHERE id = ? AND client_id = ?')
+      .prepare('SELECT title FROM tasks WHERE id = ? AND client_id = ? AND archived_at IS NULL')
       .get(taskId, clientId) as { title: string } | undefined;
     if (!existing) throw notFound('Task');
 
     transact(db, () => {
-      db.prepare('DELETE FROM tasks WHERE id = ? AND client_id = ?').run(taskId, clientId);
+      archiveRow(db, 'tasks', taskId);
       logSystemActivity(db, clientId, `Task "${existing.title}" deleted`, req.actor!.name);
       audit(db, req, {
         action: 'task.delete',

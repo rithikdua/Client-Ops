@@ -8,6 +8,16 @@ import { assertClient, snapshotFor } from './clients';
 export function activityRoutes(db: Db): Router {
   const router = Router({ mergeParams: true });
   router.use(requireSection('clients'));
+  // Every route below belongs to a client, so the client has to exist and be
+  // live. On the mount rather than in each handler: several of these used to
+  // rely on their own `WHERE client_id = ?` lookups, which check the row is in
+  // the right account but not that the account is still there — so an archived
+  // client's tasks stayed editable through a URL somebody had open.
+  router.use((req, _res, next) => {
+    assertClient(db, (req.params as { clientId: string }).clientId);
+    next();
+  });
+
 
   // Only hand-written notes are accepted here; `system` entries are written by
   // the server as a side effect of other mutations and can't be forged. The

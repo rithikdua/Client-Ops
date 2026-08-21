@@ -14,6 +14,7 @@ import {
   setAttachment,
 } from '../domain/attachments';
 import { assertClient, snapshotFor } from './clients';
+import { archiveRow } from '../domain/archive';
 
 interface InvoiceRow {
   id: string;
@@ -26,7 +27,7 @@ interface InvoiceRow {
 function loadInvoice(db: Db, clientId: string, invoiceId: string): InvoiceRow {
   const row = db
     .prepare(
-      'SELECT id, number, amount_minor, issue_date FROM invoices WHERE id = ? AND client_id = ?',
+      'SELECT id, number, amount_minor, issue_date FROM invoices WHERE id = ? AND client_id = ? AND archived_at IS NULL',
     )
     .get(invoiceId, clientId) as InvoiceRow | undefined;
   if (!row) throw notFound('Invoice');
@@ -66,6 +67,16 @@ function assertPaymentDate(invoice: { number: string; issue_date: string }, date
 export function invoiceRoutes(db: Db): Router {
   const router = Router({ mergeParams: true });
   router.use(requireSection('invoices'));
+  // Every route below belongs to a client, so the client has to exist and be
+  // live. On the mount rather than in each handler: several of these used to
+  // rely on their own `WHERE client_id = ?` lookups, which check the row is in
+  // the right account but not that the account is still there — so an archived
+  // client's tasks stayed editable through a URL somebody had open.
+  router.use((req, _res, next) => {
+    assertClient(db, (req.params as { clientId: string }).clientId);
+    next();
+  });
+
 
   router.post('/', requireWrite, (req, res) => {
     const { clientId } = req.params as { clientId: string };
@@ -76,6 +87,8 @@ export function invoiceRoutes(db: Db): Router {
     // statement, in the client's ledger, in an email chasing it. Two invoices on
     // one account sharing a number makes every one of those ambiguous.
     const clash = db
+      // Archived invoices included on purpose: their numbers stay reserved, so
+      // restoring one can never collide with something issued in the meantime.
       .prepare('SELECT id FROM invoices WHERE client_id = ? AND number = ?')
       .get(clientId, input.number);
     if (clash) {
@@ -119,7 +132,7 @@ export function invoiceRoutes(db: Db): Router {
     const { clientId, invoiceId } = req.params as { clientId: string; invoiceId: string };
     const invoice = loadInvoice(db, clientId, invoiceId);
     transact(db, () => {
-      db.prepare('DELETE FROM invoices WHERE id = ?').run(invoiceId);
+      archiveRow(db, 'invoices', invoiceId);
       logSystemActivity(db, clientId, `Invoice ${invoice.number} deleted`, req.actor!.name);
       // Deleting an invoice destroys its payment history with it, so the amount
       // goes into the trail — the feed entry alone would not say what was lost.

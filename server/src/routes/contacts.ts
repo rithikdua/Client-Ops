@@ -6,10 +6,21 @@ import { audit } from '../domain/audit';
 import { notFound } from '../http/errors';
 import { contactSchema } from '../http/validate';
 import { assertClient, snapshotFor } from './clients';
+import { archiveRow } from '../domain/archive';
 
 export function contactRoutes(db: Db): Router {
   const router = Router({ mergeParams: true });
   router.use(requireSection('clients'));
+  // Every route below belongs to a client, so the client has to exist and be
+  // live. On the mount rather than in each handler: several of these used to
+  // rely on their own `WHERE client_id = ?` lookups, which check the row is in
+  // the right account but not that the account is still there — so an archived
+  // client's tasks stayed editable through a URL somebody had open.
+  router.use((req, _res, next) => {
+    assertClient(db, (req.params as { clientId: string }).clientId);
+    next();
+  });
+
 
   router.post('/', requireWrite, (req, res) => {
     const { clientId } = req.params as { clientId: string };
@@ -29,12 +40,12 @@ export function contactRoutes(db: Db): Router {
     assertClient(db, clientId);
     // Read the name before deleting: afterwards there is nothing to log.
     const existing = db
-      .prepare('SELECT name FROM contacts WHERE id = ? AND client_id = ?')
+      .prepare('SELECT name FROM contacts WHERE id = ? AND client_id = ? AND archived_at IS NULL')
       .get(contactId, clientId) as { name: string } | undefined;
     if (!existing) throw notFound('Contact');
 
     transact(db, () => {
-      db.prepare('DELETE FROM contacts WHERE id = ? AND client_id = ?').run(contactId, clientId);
+      archiveRow(db, 'contacts', contactId);
       logSystemActivity(db, clientId, `Contact "${existing.name}" removed`, req.actor!.name);
       audit(db, req, {
         action: 'contact.delete',

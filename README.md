@@ -112,6 +112,7 @@ npm run create-user # create an account from the terminal
 npm run db:reset   # DESTRUCTIVE: empty the database (back to first-run setup)
 npm run db:demo    # DESTRUCTIVE: empty it, then load the sample workspace
 npm run uploads:gc # delete uploaded files nothing references any more
+npm run purge-archived # DESTRUCTIVE: permanently remove long-archived records
 npm run audit      # print the audit trail (--limit, --action 'team.*', --json)
 npm run backup     # verified snapshot of the database (--list to see them)
 npm run restore    # put one back:  npm run restore -- --latest
@@ -255,6 +256,16 @@ value with the next billing countdown, outstanding balance and open deliverables
   dialog traps focus, closes on Escape and hands focus back; tabs and the
   segmented toggles are one tab stop with arrow-key movement; and the focus ring
   is drawn rather than suppressed. `npm run a11y` proves it — see below.
+- **Deleting hides a record; it does not destroy it** (`server/src/domain/archive.ts`).
+  Deleting a client used to cascade through its invoices, payments, contacts,
+  deliverables, documents and tasks — years of an account, gone on one click,
+  with only a line in the audit log saying roughly how much. A delete now stamps
+  `archived_at`, every read filters it out, and **Clients ▸ Archived** and a
+  client's own **Archived** tab put it back. Restoring a record whose client is
+  archived is refused rather than done silently: it would exist and appear
+  nowhere, which looks exactly like the restore having failed. Nothing expires on
+  its own — `npm run purge-archived` is the only thing that destroys, it refuses
+  without `--yes`, and it tells you what the cascade will take.
 - **An attachment references its upload** (`server/src/domain/attachments.ts`).
   Files used to be four unrelated columns of URL text, and "is this file still in
   use?" was answered by reading every one of those strings and pulling a filename
@@ -572,7 +583,12 @@ These weren't specified in the handoff, so they're called out rather than buried
 9. **Presentation settings** (density, sidebar rail, header glow) were
    design-tool props, not in-app controls, so they are constants in
    `src/state/settings.ts` driven by `data-` attributes on the shell.
-10. **Five palette values were darkened for contrast** — the only place the
+10. **Archiving covers records, not people.** A teammate is still removed
+    outright from the Team screen: an account is a credential as much as a row,
+    and "deleted but restorable" is the wrong shape for something that governs
+    access. Their name survives on everything they owned regardless — see the
+    assignments note above.
+11. **Five palette values were darkened for contrast** — the only place the
     handed-off design is altered rather than reproduced. Muted text (`--ink-3`)
     sat at 3.36:1 on white, `--danger` at 3.75:1, `--success` at 3.17:1, and the
     green, amber and red chips between 2.71:1 and 3.55:1, all under the 4.5:1
@@ -634,7 +650,7 @@ Honest list, in the order I would tackle them:
 
 ## Verified
 
-`npm run typecheck`, `npm run build` and `npm test` (272 tests, one skipped
+`npm run typecheck`, `npm run build` and `npm test` (293 tests, one skipped
 because the sandbox runs as root and cannot make a directory unwritable) all
 pass, as does `npm run a11y` — axe reports **zero violations** on all fourteen
 screens and dialogs it visits, and all twenty-seven keyboard checks pass.
@@ -679,6 +695,12 @@ The migration was also run against the pre-existing development database rather
 than only a fresh seed — all 23 assignments across clients, deliverables, tasks
 and follow-ups linked to accounts on upgrade, and the later idempotency columns
 were added to that same database on the next start.
+
+Archiving was driven through the real UI: deleting a client removed it from the
+list, **Clients ▸ Archived** showed it with the date it went, Restore brought it
+back, and the same round trip works for a task through a client's **Archived**
+tab. `npm run purge-archived` refuses without `--yes` and names what the cascade
+would take.
 
 Idempotent replay was checked against a running server, not only in tests:
 issuing a password reset twice under one key returns the identical link both

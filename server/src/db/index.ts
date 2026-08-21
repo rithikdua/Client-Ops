@@ -8,7 +8,7 @@ import { fileURLToPath } from 'node:url';
 
 const here = dirname(fileURLToPath(import.meta.url));
 
-export const SCHEMA_VERSION = 13;
+export const SCHEMA_VERSION = 14;
 
 /** Absolute path to the SQLite file. Override with DATABASE_PATH. */
 export const DB_PATH = envString('DATABASE_PATH', join(here, '..', '..', 'data', 'client-ops.db'));
@@ -87,6 +87,29 @@ function ensureInvoiceNumberIndex(db: Db): void {
  * existing table has to be applied here too.
  */
 function migrate(db: Db, from: number): void {
+  if (from < 14) {
+    // v14: deleting archives instead of destroying. Existing rows are all live,
+    // which NULL already means, so there is nothing to backfill.
+    for (const table of [
+      'clients',
+      'contacts',
+      'invoices',
+      'deliverables',
+      'documents',
+      'tasks',
+      'follow_ups',
+    ]) {
+      const columns = db.prepare(`PRAGMA table_info(${table})`).all() as { name: string }[];
+      if (!columns.some((c) => c.name === 'archived_at')) {
+        db.exec(`ALTER TABLE ${table} ADD COLUMN archived_at TEXT`);
+      }
+    }
+    db.exec(`
+      CREATE INDEX IF NOT EXISTS idx_invoices_live ON invoices(client_id, archived_at);
+      CREATE INDEX IF NOT EXISTS idx_deliverables_live ON deliverables(client_id, archived_at);
+      CREATE INDEX IF NOT EXISTS idx_tasks_live ON tasks(client_id, archived_at);
+    `);
+  }
   if (from < 13) {
     // v13: attachments become a relation instead of four columns of URL text.
     //

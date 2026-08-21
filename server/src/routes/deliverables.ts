@@ -9,10 +9,21 @@ import { notFound } from '../http/errors';
 import { deliverablePatchSchema, deliverableSchema } from '../http/validate';
 import { addAttachment, setAttachment } from '../domain/attachments';
 import { assertClient, snapshotFor } from './clients';
+import { archiveRow } from '../domain/archive';
 
 export function deliverableRoutes(db: Db): Router {
   const router = Router({ mergeParams: true });
   router.use(requireSection('deliverables'));
+  // Every route below belongs to a client, so the client has to exist and be
+  // live. On the mount rather than in each handler: several of these used to
+  // rely on their own `WHERE client_id = ?` lookups, which check the row is in
+  // the right account but not that the account is still there — so an archived
+  // client's tasks stayed editable through a URL somebody had open.
+  router.use((req, _res, next) => {
+    assertClient(db, (req.params as { clientId: string }).clientId);
+    next();
+  });
+
 
   router.post('/', requireWrite, (req, res) => {
     const { clientId } = req.params as { clientId: string };
@@ -49,7 +60,9 @@ export function deliverableRoutes(db: Db): Router {
   router.patch('/:deliverableId', requireWrite, (req, res) => {
     const { clientId, deliverableId } = req.params as { clientId: string; deliverableId: string };
     const existing = db
-      .prepare('SELECT id, title, status FROM deliverables WHERE id = ? AND client_id = ?')
+      .prepare(
+        'SELECT id, title, status FROM deliverables WHERE id = ? AND client_id = ? AND archived_at IS NULL',
+      )
       .get(deliverableId, clientId) as { id: string; title: string; status: string } | undefined;
     if (!existing) throw notFound('Deliverable');
 
@@ -83,15 +96,12 @@ export function deliverableRoutes(db: Db): Router {
     const { clientId, deliverableId } = req.params as { clientId: string; deliverableId: string };
     assertClient(db, clientId);
     const existing = db
-      .prepare('SELECT title FROM deliverables WHERE id = ? AND client_id = ?')
+      .prepare('SELECT title FROM deliverables WHERE id = ? AND client_id = ? AND archived_at IS NULL')
       .get(deliverableId, clientId) as { title: string } | undefined;
     if (!existing) throw notFound('Deliverable');
 
     transact(db, () => {
-      db.prepare('DELETE FROM deliverables WHERE id = ? AND client_id = ?').run(
-        deliverableId,
-        clientId,
-      );
+      archiveRow(db, 'deliverables', deliverableId);
       logSystemActivity(db, clientId, `Deliverable "${existing.title}" deleted`, req.actor!.name);
       audit(db, req, {
         action: 'deliverable.delete',

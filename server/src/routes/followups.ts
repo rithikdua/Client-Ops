@@ -8,6 +8,7 @@ import { bumpVersion } from '../domain/versions';
 import { notFound } from '../http/errors';
 import { completeFollowUpSchema, followUpSchema } from '../http/validate';
 import { snapshotFor } from './clients';
+import { archiveRow } from '../domain/archive';
 
 export function followUpRoutes(db: Db): Router {
   const router = Router();
@@ -47,7 +48,7 @@ export function followUpRoutes(db: Db): Router {
 
   router.patch('/:followUpId', requireWrite, (req, res) => {
     const { followUpId } = req.params;
-    if (!db.prepare('SELECT id FROM follow_ups WHERE id = ?').get(followUpId)) {
+    if (!db.prepare('SELECT id FROM follow_ups WHERE id = ? AND archived_at IS NULL').get(followUpId)) {
       throw notFound('Follow-up');
     }
     const input = followUpSchema.parse(req.body);
@@ -79,7 +80,7 @@ export function followUpRoutes(db: Db): Router {
    */
   router.post('/:followUpId/complete', requireWrite, (req, res) => {
     const { followUpId } = req.params;
-    if (!db.prepare('SELECT id FROM follow_ups WHERE id = ?').get(followUpId)) {
+    if (!db.prepare('SELECT id FROM follow_ups WHERE id = ? AND archived_at IS NULL').get(followUpId)) {
       throw notFound('Follow-up');
     }
     const input = completeFollowUpSchema.parse(req.body);
@@ -116,12 +117,12 @@ export function followUpRoutes(db: Db): Router {
   router.delete('/:followUpId', requireWrite, (req, res) => {
     const { followUpId } = req.params;
     const existing = db
-      .prepare('SELECT name, company_name, status FROM follow_ups WHERE id = ?')
+      .prepare('SELECT name, company_name, status FROM follow_ups WHERE id = ? AND archived_at IS NULL')
       .get(followUpId) as { name: string; company_name: string; status: string } | undefined;
     if (!existing) throw notFound('Follow-up');
 
     transact(db, () => {
-      db.prepare('DELETE FROM follow_ups WHERE id = ?').run(followUpId);
+      archiveRow(db, 'follow_ups', followUpId);
       audit(db, req, {
         action: 'followup.delete',
         targetType: 'followup',

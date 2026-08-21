@@ -18,6 +18,7 @@
     "create-user": "tsx server/scripts/create-user.ts",
     "db:demo": "tsx server/scripts/reset.ts --demo",
     "uploads:gc": "tsx server/scripts/gc-uploads.ts",
+    "purge-archived": "tsx server/scripts/purge-archived.ts",
     "audit": "tsx server/scripts/audit.ts",
     "backup": "tsx server/scripts/backup.ts",
     "restore": "tsx server/scripts/restore.ts",

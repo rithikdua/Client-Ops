@@ -9,10 +9,17 @@ import { buildSnapshot } from '../domain/snapshot';
 import { HttpError, notFound } from '../http/errors';
 import { checkClientDates, clientPatchSchema, clientSchema } from '../http/validate';
 import { fromMinor, gstBreakdown, toMinor } from '../money';
+import { archiveRow } from '../domain/archive';
 
 /** Fails the request unless the client exists. */
 export function assertClient(db: Db, clientId: string): void {
-  const row = db.prepare('SELECT id FROM clients WHERE id = ?').get(clientId);
+  // Archived clients are gone as far as every other route is concerned: this
+  // guard sits in front of contacts, invoices, deliverables, documents and
+  // tasks, so filtering here is what stops an archived account being edited
+  // through a URL somebody still has open.
+  const row = db
+    .prepare('SELECT id FROM clients WHERE id = ? AND archived_at IS NULL')
+    .get(clientId);
   if (!row) throw notFound('Client');
 }
 
@@ -257,7 +264,9 @@ export function clientRoutes(db: Db): Router {
   router.delete('/:clientId', requireSection('clients'), requireWrite, (req, res) => {
     const { clientId } = req.params;
     assertClient(db, clientId);
-    const client = db.prepare('SELECT name FROM clients WHERE id = ?').get(clientId) as {
+    const client = db
+      .prepare('SELECT name FROM clients WHERE id = ? AND archived_at IS NULL')
+      .get(clientId) as {
       name: string;
     };
     const counts = db
@@ -272,7 +281,7 @@ export function clientRoutes(db: Db): Router {
       .get(clientId, clientId, clientId, clientId, clientId) as Record<string, number>;
 
     transact(db, () => {
-      db.prepare('DELETE FROM clients WHERE id = ?').run(clientId);
+      archiveRow(db, 'clients', clientId);
       audit(db, req, {
         action: 'client.delete',
         targetType: 'client',

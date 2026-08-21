@@ -1,4 +1,11 @@
-import type { Access, Client, FollowUp, Permission, Teammate } from '../data/types';
+import type {
+  Access,
+  ArchivedRecord,
+  Client,
+  FollowUp,
+  Permission,
+  Teammate,
+} from '../data/types';
 
 /**
  * The whole workspace as the server is willing to show the signed-in user.
@@ -125,6 +132,22 @@ export const api = {
   logout: () => post<void>('/auth/logout'),
   startPreview: (teammateId: string) => post<Snapshot>('/auth/preview', { teammateId }),
   exitPreview: () => del<Snapshot>('/auth/preview'),
+
+  /**
+   * What has been archived, and putting it back.
+   *
+   * Deleting hides a record rather than destroying it, so every list has a
+   * counterpart here. `clientId` narrows it to one account, which is what the
+   * client detail tabs ask for.
+   */
+  listArchived: (params: { clientId?: string; type?: string } = {}) => {
+    const query = new URLSearchParams(
+      Object.entries(params).filter(([, v]) => v) as [string, string][],
+    ).toString();
+    return get<{ archived: ArchivedRecord[] }>(`/archive${query ? `?${query}` : ''}`);
+  },
+  restoreArchived: (type: string, id: string) =>
+    post<Snapshot>(`/archive/${type}/${encodeURIComponent(id)}/restore`),
 
   createClient: (body: unknown, key?: string) => post<Snapshot>('/clients', body, key),
   updateClient: (clientId: string, body: unknown) => patch<Snapshot>(`/clients/${clientId}`, body),

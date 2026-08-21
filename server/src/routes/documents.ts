@@ -7,10 +7,21 @@ import { notFound } from '../http/errors';
 import { documentSchema } from '../http/validate';
 import { addAttachment } from '../domain/attachments';
 import { assertClient, snapshotFor } from './clients';
+import { archiveRow } from '../domain/archive';
 
 export function documentRoutes(db: Db): Router {
   const router = Router({ mergeParams: true });
   router.use(requireSection('documents'));
+  // Every route below belongs to a client, so the client has to exist and be
+  // live. On the mount rather than in each handler: several of these used to
+  // rely on their own `WHERE client_id = ?` lookups, which check the row is in
+  // the right account but not that the account is still there — so an archived
+  // client's tasks stayed editable through a URL somebody had open.
+  router.use((req, _res, next) => {
+    assertClient(db, (req.params as { clientId: string }).clientId);
+    next();
+  });
+
 
   router.post('/', requireWrite, (req, res) => {
     const { clientId } = req.params as { clientId: string };
@@ -43,12 +54,12 @@ export function documentRoutes(db: Db): Router {
     const { clientId, documentId } = req.params as { clientId: string; documentId: string };
     assertClient(db, clientId);
     const existing = db
-      .prepare('SELECT name FROM documents WHERE id = ? AND client_id = ?')
+      .prepare('SELECT name FROM documents WHERE id = ? AND client_id = ? AND archived_at IS NULL')
       .get(documentId, clientId) as { name: string } | undefined;
     if (!existing) throw notFound('Document');
 
     transact(db, () => {
-      db.prepare('DELETE FROM documents WHERE id = ? AND client_id = ?').run(documentId, clientId);
+      archiveRow(db, 'documents', documentId);
       logSystemActivity(db, clientId, `Document "${existing.name}" deleted`, req.actor!.name);
       audit(db, req, {
         action: 'document.delete',

@@ -36,7 +36,25 @@ export type ClientTabId =
   | 'deliverables'
   | 'documents'
   | 'tasks'
-  | 'activity';
+  | 'activity'
+  | 'archived';
+
+/**
+ * A record that was deleted, which here means hidden rather than destroyed.
+ *
+ * Enough to recognise it and put it back — not the record itself. Restoring
+ * returns a fresh snapshot, which is where the real data comes from.
+ */
+export interface ArchivedRecord {
+  id: string;
+  /** The table it lives in: `clients`, `invoices`, `follow_ups`… */
+  type: string;
+  /** Its name, number or title — whatever a person would know it by. */
+  label: string;
+  archivedAt: string;
+  clientId?: string;
+  clientName?: string;
+}
 
 export interface AttachedFile {
   name: string;

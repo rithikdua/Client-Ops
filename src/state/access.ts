@@ -31,6 +31,7 @@ const ALL_CLIENT_TABS: ClientTabId[] = [
   'documents',
   'tasks',
   'activity',
+  'archived',
 ];
 
 export function useAccess(): AccessInfo {

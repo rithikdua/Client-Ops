@@ -116,7 +116,7 @@ describe('F-06 an attachment references its upload', () => {
     assert.ok(existsSync(join(UPLOADS, 'linked.pdf')), 'the attached file is untouched');
   });
 
-  test('deleting the record takes its attachment with it, in one step', async () => {
+  test('archiving keeps the attachment; purging is what takes it', async () => {
     fakeUpload('doomed.pdf');
     const created = await call('POST', `/api/clients/${clientId}/deliverables`, {
       title: 'With a file',
@@ -128,21 +128,25 @@ describe('F-06 an attachment references its upload', () => {
       (d: any) => d.title === 'With a file',
     );
     assert.equal(deliverable.file.url, '/api/uploads/doomed.pdf');
-    assert.equal(
-      (db.prepare('SELECT COUNT(*) n FROM attachments WHERE deliverable_id = ?').get(deliverable.id) as any).n,
-      1,
-    );
 
+    const attachmentCount = () =>
+      (db.prepare('SELECT COUNT(*) n FROM attachments WHERE deliverable_id = ?').get(deliverable.id) as any).n;
+    assert.equal(attachmentCount(), 1);
+
+    // Deleting archives (F-10), so the attachment has to survive — otherwise
+    // restoring the deliverable would bring back a record with its file gone.
     await call('DELETE', `/api/clients/${clientId}/deliverables/${deliverable.id}`);
+    assert.equal(attachmentCount(), 1, 'archived, so still attached');
+    assert.ok(existsSync(join(UPLOADS, 'doomed.pdf')));
+
+    const { purgeArchived } = await import('../src/domain/archive');
+    purgeArchived(db, new Date(Date.now() + 1000).toISOString());
 
     // No code deleted this. The foreign key did, in the same transaction — which
     // is the difference between a relation and four columns of text.
-    assert.equal(
-      (db.prepare('SELECT COUNT(*) n FROM attachments WHERE deliverable_id = ?').get(deliverable.id) as any).n,
-      0,
-    );
-    // The file itself waits for the sweep, which is deliberate: it may have been
-    // attached somewhere else too.
+    assert.equal(attachmentCount(), 0, 'purged, so the attachment went with it');
+    // The file waits for the sweep, which is deliberate: it may be attached
+    // somewhere else too.
     assert.ok(existsSync(join(UPLOADS, 'doomed.pdf')));
   });
 

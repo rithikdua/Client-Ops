@@ -13,6 +13,7 @@ import { safeHref } from '../../lib/urls';
 import { useAccess } from '../../state/access';
 import { useApp } from '../../state/AppState';
 import { ActivityTab } from './ActivityTab';
+import { ArchivedTab } from './ArchivedTab';
 import { ContactsTab } from './ContactsTab';
 import { DeliverablesTab } from './DeliverablesTab';
 import { DocumentsTab } from './DocumentsTab';
@@ -28,6 +29,7 @@ const TAB_LABELS: Record<ClientTabId, string> = {
   documents: 'Documents',
   tasks: 'Tasks',
   activity: 'Activity',
+  archived: 'Archived',
 };
 
 export function ClientDetailView({ client }: { client: Client }) {
@@ -269,6 +271,7 @@ export function ClientDetailView({ client }: { client: Client }) {
         {activeTab === 'documents' && <DocumentsTab client={client} />}
         {activeTab === 'tasks' && <TasksTab client={client} />}
         {activeTab === 'activity' && <ActivityTab client={client} />}
+        {activeTab === 'archived' && <ArchivedTab client={client} />}
       </div>
     </div>
   );

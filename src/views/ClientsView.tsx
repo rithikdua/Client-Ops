@@ -1,4 +1,12 @@
-import { PageHeader, RowAction, SearchField, Select, TableHead } from '../components/ui';
+import { ArchivedList } from '../components/ArchivedList';
+import {
+  PageHeader,
+  RowAction,
+  SearchField,
+  SegmentedControl,
+  Select,
+  TableHead,
+} from '../components/ui';
 import { HEALTH_OPTIONS } from '../data/options';
 import type { Health } from '../data/types';
 import { Avatar } from '../ds/Avatar';
@@ -64,6 +72,33 @@ export function ClientsView() {
         }
       />
 
+      {/*
+        Deleting a client hides it rather than destroying it, so this is where
+        it goes and where it comes back from. Under the old behaviour one click
+        took the account and everything under it — invoices, contacts,
+        deliverables, documents, tasks — with nothing to undo it.
+      */}
+      <SegmentedControl<'active' | 'archived'>
+        label="Which accounts to show"
+        value={state.clientsTab}
+        onChange={actions.setClientsTab}
+        options={[
+          { value: 'active', label: `Active (${total})` },
+          { value: 'archived', label: 'Archived' },
+        ]}
+        style={{ marginBottom: 16 }}
+      />
+
+      {state.clientsTab === 'archived' ? (
+        <ArchivedList
+          rows={state.archived.filter((a) => a.type === 'clients')}
+          loading={state.archivedLoading}
+          canWrite={canWrite}
+          empty="Nothing archived. Deleted accounts appear here."
+          onRestore={actions.restoreArchived}
+        />
+      ) : (
+      <>
       <div className="filter-row">
         <SearchField
           value={state.search}
@@ -154,6 +189,8 @@ export function ClientsView() {
           </div>
         ))}
       </div>
+      </>
+      )}
     </div>
   );
 }

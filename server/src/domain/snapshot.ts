@@ -140,7 +140,7 @@ const firstFile = (list: Attachment[] | undefined) =>
 
 function loadContacts(db: Db, clientId: string): Contact[] {
   return db
-    .prepare('SELECT id, name, role, email, phone FROM contacts WHERE client_id = ? ORDER BY rowid')
+    .prepare('SELECT id, name, role, email, phone FROM contacts WHERE client_id = ? AND archived_at IS NULL ORDER BY rowid')
     .all(clientId) as Contact[];
 }
 
@@ -149,7 +149,7 @@ function loadInvoices(db: Db, clientId: string): Invoice[] {
     .prepare(
       `SELECT id, number, amount_minor, base_amount_minor, gst_percent, gst_amount_minor,
               gst_mode, issue_date, due_date
-         FROM invoices WHERE client_id = ? ORDER BY rowid`,
+         FROM invoices WHERE client_id = ? AND archived_at IS NULL ORDER BY rowid`,
     )
     .all(clientId) as {
     id: string;
@@ -191,7 +191,7 @@ function loadDeliverables(db: Db, clientId: string): Deliverable[] {
       `SELECT d.id, d.title, d.description, ${CURRENT_NAME('d', 'owner')}, d.owner_user_id,
               d.due_date, d.status, d.version
          FROM deliverables d ${ASSIGNEE_JOIN('d', 'owner_user_id')}
-        WHERE d.client_id = ? ORDER BY d.rowid`,
+        WHERE d.client_id = ? AND d.archived_at IS NULL ORDER BY d.rowid`,
     )
     .all(clientId) as {
     id: string;
@@ -219,7 +219,7 @@ function loadDeliverables(db: Db, clientId: string): Deliverable[] {
 
 function loadDocuments(db: Db, clientId: string): ClientDocument[] {
   const rows = db
-    .prepare('SELECT id, name, type, date, source FROM documents WHERE client_id = ? ORDER BY rowid')
+    .prepare('SELECT id, name, type, date, source FROM documents WHERE client_id = ? AND archived_at IS NULL ORDER BY rowid')
     .all(clientId) as {
     id: string;
     name: string;
@@ -253,7 +253,7 @@ function loadTasks(db: Db, clientId: string): Task[] {
       `SELECT t.id, t.title, t.description, ${CURRENT_NAME('t', 'assignee')}, t.assignee_user_id,
               t.status, t.priority, t.due_date, t.version
          FROM tasks t ${ASSIGNEE_JOIN('t', 'assignee_user_id')}
-        WHERE t.client_id = ? ORDER BY t.rowid`,
+        WHERE t.client_id = ? AND t.archived_at IS NULL ORDER BY t.rowid`,
     )
     .all(clientId) as {
     id: string;
@@ -399,6 +399,7 @@ function loadFollowUps(db: Db): FollowUp[] {
       `SELECT f.id, f.name, f.company_name, f.email, f.phone, f.related_client_id, f.reason,
               ${CURRENT_NAME('f', 'owner')}, f.owner_user_id, f.due_date, f.status, f.version
          FROM follow_ups f ${ASSIGNEE_JOIN('f', 'owner_user_id')}
+        WHERE f.archived_at IS NULL
         ORDER BY f.due_date, f.rowid`,
     )
     .all() as {
@@ -451,6 +452,7 @@ export function buildSnapshot(db: Db, actor: Actor): Snapshot {
       // matter of driver behaviour.
       `SELECT c.*, assignee_user.name AS owner_account_name
          FROM clients c ${ASSIGNEE_JOIN('c', 'owner_user_id')}
+        WHERE c.archived_at IS NULL
         ORDER BY c.created_at, c.rowid`,
     )
     .all() as ClientRow[];
