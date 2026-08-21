@@ -221,8 +221,18 @@ value with the next billing countdown, outstanding balance and open deliverables
 - **GST** is entered as base + rate with an excluded/included toggle; the split
   is computed server-side and previewed live in the form using the same integer
   maths.
-- **Per-client currency**, with cross-client roll-ups reported in INR — summing
-  mixed currencies is meaningless without FX rates.
+- **Per-client currency**, with cross-client roll-ups kept as one total *per
+  currency* rather than converted — summing mixed currencies is meaningless
+  without FX rates, and inventing a rate is worse than showing two numbers.
+- **An assignment points at an account, not a name**
+  (`server/src/domain/assignees.ts`). Every client, deliverable, task and
+  follow-up stores the assignee's user id *and* their name. The id is what
+  survives a rename and what "everything Maya owns" is built from; the name
+  keeps history readable when an account is deleted, and holds people who never
+  had a login at all — a contractor, someone who left. Display follows the
+  account when there is one, so a rename does not leave a trail of stale
+  spellings. A name that unambiguously matches one account is linked
+  automatically; an ambiguous one is left as text rather than guessed at.
 - **Billing periods** walk forward from the contract start date in whole cycles
   for "paid this quarter/month/year" and the next-billing countdown. One-time
   contracts show no recurrence.
@@ -540,7 +550,7 @@ Honest list, in the order I would tackle them:
 2. **Accessibility.** Many interactive elements are `div`s with `onClick`,
    inherited from the prototype: no keyboard focus, roles or labels. This needs a
    pass before real users.
-3. **No frontend tests.** The 35 server tests cover money, invoice status, auth,
+3. **No frontend tests.** The server tests cover money, invoice status, auth,
    permission redaction and the endpoints; the UI was verified with a scripted
    browser pass (below) that is not checked in, because it hard-codes this
    sandbox's Chromium path.
@@ -563,10 +573,17 @@ Honest list, in the order I would tackle them:
    character.
 8. **Optimistic UI.** Mutations wait for the round trip; on a slow link the app
    feels it.
+9. **Team management stops at add / change access / remove.** Assignments now
+   reference accounts, which is what the missing operations need — renaming a
+   teammate, deactivating one without deleting them, and handing their clients
+   and tasks to someone else. Each is a Team screen and one endpoint; none of
+   them needs a data change any more.
 
 ## Verified
 
-`npm run typecheck`, `npm run build` and `npm test` (86 tests) all pass.
+`npm run typecheck`, `npm run build` and `npm test` (266 tests, one skipped
+because the sandbox runs as root and cannot make a directory unwritable) all
+pass.
 
 The real-account path was driven in a browser against an empty database: setup
 appears instead of a sign-in form, rejects a short password and a mismatched
@@ -599,3 +616,11 @@ through the API; logging a follow-up call with call-back-later snoozing;
 previewing as a teammate without invoice access and confirming no currency symbol
 appears anywhere; and signing in as the Viewer to confirm every write affordance
 is absent.
+
+Assignments were checked the same way after the accounts change: every assignee
+control on the Clients, Tasks and Follow-ups forms lists accounts by id and
+labels them by name, a task defaults to the signed-in person, and saving an owner
+change sent `ownerUserId` and stored both the id and the account's current name.
+The migration was also run against the pre-existing development database rather
+than only a fresh seed — all 23 assignments across clients, deliverables, tasks
+and follow-ups linked to accounts on upgrade.

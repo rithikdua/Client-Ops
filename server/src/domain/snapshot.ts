@@ -48,6 +48,25 @@ export interface Snapshot {
   workspace: { timezone: string };
 }
 
+/* -- assignments --------------------------------------------------------- */
+
+/**
+ * An assignment stores both the account and the name (see `domain/assignees`).
+ * When the two disagree — someone married, corrected a typo, or started going by
+ * a different name — the account is the one that gets maintained, so it is the
+ * one we display. Reading the stored string instead would leave every client,
+ * task and deliverable they own showing the name they had on the day it was
+ * assigned, which is most of what made the old model unworkable.
+ *
+ * The stored name still answers for assignments with no account behind them: a
+ * contractor, someone who left, a name typed before they had a login.
+ */
+const ASSIGNEE_JOIN = (alias: string, idColumn: string) =>
+  `LEFT JOIN users assignee_user ON assignee_user.id = ${alias}.${idColumn}`;
+
+const CURRENT_NAME = (alias: string, nameColumn: string) =>
+  `COALESCE(assignee_user.name, ${alias}.${nameColumn}) AS ${nameColumn}`;
+
 /* -- row shapes ---------------------------------------------------------- */
 
 interface ClientRow {
@@ -57,6 +76,9 @@ interface ClientRow {
   industry: string;
   health: Client['health'];
   owner: string;
+  owner_user_id: string | null;
+  /** The linked account's current name, when there is one. Overrides `owner`. */
+  owner_account_name: string | null;
   stage: Client['stage'];
   currency: Client['currency'];
   billing_cycle: Client['billingCycle'];
@@ -135,14 +157,17 @@ function loadInvoices(db: Db, clientId: string): Invoice[] {
 function loadDeliverables(db: Db, clientId: string): Deliverable[] {
   const rows = db
     .prepare(
-      `SELECT id, title, description, owner, due_date, status, file_name, file_url, version
-         FROM deliverables WHERE client_id = ? ORDER BY rowid`,
+      `SELECT d.id, d.title, d.description, ${CURRENT_NAME('d', 'owner')}, d.owner_user_id,
+              d.due_date, d.status, d.file_name, d.file_url, d.version
+         FROM deliverables d ${ASSIGNEE_JOIN('d', 'owner_user_id')}
+        WHERE d.client_id = ? ORDER BY d.rowid`,
     )
     .all(clientId) as {
     id: string;
     title: string;
     description: string;
     owner: string;
+    owner_user_id: string | null;
     due_date: string;
     status: Deliverable['status'];
     file_name: string | null;
@@ -154,6 +179,7 @@ function loadDeliverables(db: Db, clientId: string): Deliverable[] {
     title: r.title,
     description: r.description,
     owner: r.owner,
+    ownerUserId: r.owner_user_id ?? undefined,
     dueDate: r.due_date,
     status: r.status,
     version: r.version,
@@ -194,14 +220,17 @@ function loadActivity(db: Db, clientId: string): ActivityEntry[] {
 function loadTasks(db: Db, clientId: string): Task[] {
   const rows = db
     .prepare(
-      `SELECT id, title, description, assignee, status, priority, due_date, version
-         FROM tasks WHERE client_id = ? ORDER BY rowid`,
+      `SELECT t.id, t.title, t.description, ${CURRENT_NAME('t', 'assignee')}, t.assignee_user_id,
+              t.status, t.priority, t.due_date, t.version
+         FROM tasks t ${ASSIGNEE_JOIN('t', 'assignee_user_id')}
+        WHERE t.client_id = ? ORDER BY t.rowid`,
     )
     .all(clientId) as {
     id: string;
     title: string;
     description: string;
     assignee: string;
+    assignee_user_id: string | null;
     status: Task['status'];
     priority: Task['priority'];
     due_date: string;
@@ -215,6 +244,7 @@ function loadTasks(db: Db, clientId: string): Task[] {
     title: r.title,
     description: r.description,
     assignee: r.assignee,
+    assigneeUserId: r.assignee_user_id ?? undefined,
     status: r.status,
     priority: r.priority,
     dueDate: r.due_date,
@@ -283,7 +313,8 @@ function toClient(db: Db, row: ClientRow, access: Access): Client {
   if (access.overview || access.clients) {
     base.industry = row.industry;
     base.health = row.health;
-    base.owner = row.owner;
+    base.owner = row.owner_account_name ?? row.owner;
+    base.ownerUserId = row.owner_user_id ?? undefined;
     base.stage = row.stage;
     base.billingCycle = row.billing_cycle;
     base.startDate = row.start_date;
@@ -337,8 +368,10 @@ function loadTeam(db: Db): Teammate[] {
 function loadFollowUps(db: Db): FollowUp[] {
   const rows = db
     .prepare(
-      `SELECT id, name, company_name, email, phone, related_client_id, reason, owner, due_date, status, version
-         FROM follow_ups ORDER BY due_date, rowid`,
+      `SELECT f.id, f.name, f.company_name, f.email, f.phone, f.related_client_id, f.reason,
+              ${CURRENT_NAME('f', 'owner')}, f.owner_user_id, f.due_date, f.status, f.version
+         FROM follow_ups f ${ASSIGNEE_JOIN('f', 'owner_user_id')}
+        ORDER BY f.due_date, f.rowid`,
     )
     .all() as {
     id: string;
@@ -349,6 +382,7 @@ function loadFollowUps(db: Db): FollowUp[] {
     related_client_id: string | null;
     reason: string;
     owner: string;
+    owner_user_id: string | null;
     due_date: string;
     status: FollowUp['status'];
     version: number;
@@ -365,6 +399,7 @@ function loadFollowUps(db: Db): FollowUp[] {
     relatedClientId: orEmpty(r.related_client_id),
     reason: r.reason,
     owner: r.owner,
+    ownerUserId: r.owner_user_id ?? undefined,
     dueDate: r.due_date,
     status: r.status,
     version: r.version,
@@ -382,7 +417,14 @@ function accessSummary(access: Access): string {
 
 export function buildSnapshot(db: Db, actor: Actor): Snapshot {
   const clientRows = db
-    .prepare('SELECT * FROM clients ORDER BY created_at, rowid')
+    .prepare(
+      // `c.*` already carries `owner`, so the account's name arrives under its
+      // own column rather than as a second `owner` whose precedence would be a
+      // matter of driver behaviour.
+      `SELECT c.*, assignee_user.name AS owner_account_name
+         FROM clients c ${ASSIGNEE_JOIN('c', 'owner_user_id')}
+        ORDER BY c.created_at, c.rowid`,
+    )
     .all() as ClientRow[];
 
   return {

@@ -2,6 +2,7 @@ import { Router, type Request } from 'express';
 import { requireSection, requireWrite } from '../auth/permissions';
 import { newId, transact, type Db } from '../db/index';
 import { logSystemActivity, todayISO } from '../domain/activity';
+import { mentionsAssignment, resolveAssignment } from '../domain/assignees';
 import { bumpVersion } from '../domain/versions';
 import { audit } from '../domain/audit';
 import { buildSnapshot } from '../domain/snapshot';
@@ -98,16 +99,20 @@ export function clientRoutes(db: Db): Router {
     const now = new Date().toISOString();
     const money = contractColumns(input);
 
+    // The account this client belongs to, resolved once and used for the
+    // client and for any commitment created alongside it.
+    const owner = resolveAssignment(db, { userId: input.ownerUserId, name: input.owner });
+
     transact(db, () => {
       db.prepare(
         `INSERT INTO clients (
-           id, name, industry, health, owner, stage, currency, billing_cycle,
+           id, name, industry, health, owner, owner_user_id, stage, currency, billing_cycle,
            contract_value_minor, base_amount_minor, gst_percent, gst_amount_minor, gst_mode,
            start_date, onboarding_date, contract_end_date, payment_terms, website, notes,
            legal_name, gstin, nature_of_business, city_tier, mandate_type, mandate_other,
            scope_of_work, created_at
          ) VALUES (
-           @id, @name, @industry, @health, @owner, @stage, @currency, @billing_cycle,
+           @id, @name, @industry, @health, @owner, @owner_user_id, @stage, @currency, @billing_cycle,
            @contract_value_minor, @base_amount_minor, @gst_percent, @gst_amount_minor, @gst_mode,
            @start_date, @onboarding_date, @contract_end_date, @payment_terms, @website, @notes,
            @legal_name, @gstin, @nature_of_business, @city_tier, @mandate_type, @mandate_other,
@@ -118,7 +123,8 @@ export function clientRoutes(db: Db): Router {
         name: input.name,
         industry: input.industry,
         health: input.health,
-        owner: input.owner,
+        owner: owner.name,
+        owner_user_id: owner.userId,
         stage: input.stage,
         currency: input.currency,
         billing_cycle: input.billingCycle,
@@ -147,13 +153,14 @@ export function clientRoutes(db: Db): Router {
 
       if (input.initialCommitment) {
         db.prepare(
-          `INSERT INTO deliverables (id, client_id, title, description, owner, due_date, status, created_at)
-           VALUES (?, ?, ?, '', ?, ?, 'Not started', ?)`,
+          `INSERT INTO deliverables (id, client_id, title, description, owner, owner_user_id, due_date, status, created_at)
+           VALUES (?, ?, ?, '', ?, ?, ?, 'Not started', ?)`,
         ).run(
           newId(),
           id,
           input.initialCommitment.title,
-          input.owner,
+          owner.name,
+          owner.userId,
           input.initialCommitment.dueDate || todayISO(),
           now,
         );
@@ -193,7 +200,7 @@ export function clientRoutes(db: Db): Router {
     const map: Record<string, string> = {
       name: 'name',
       industry: 'industry',
-      owner: 'owner',
+      // `owner` is handled by the resolver below, not by this map.
       health: 'health',
       stage: 'stage',
       currency: 'currency',
@@ -214,6 +221,11 @@ export function clientRoutes(db: Db): Router {
     for (const [key, column] of Object.entries(map)) {
       const value = (input as Record<string, unknown>)[key];
       if (value !== undefined) columns[column] = value;
+    }
+    if (mentionsAssignment({ userId: input.ownerUserId, name: input.owner })) {
+      const owner = resolveAssignment(db, { userId: input.ownerUserId, name: input.owner });
+      columns.owner = owner.name;
+      columns.owner_user_id = owner.userId;
     }
     if (input.mandateType !== undefined) {
       columns.mandate_other = input.mandateType === 'Other' ? (input.mandateOther ?? '') : '';

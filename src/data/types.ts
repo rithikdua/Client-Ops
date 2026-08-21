@@ -83,6 +83,8 @@ export interface Deliverable {
   id: string;
   /** Bumped on every edit; sent back on save so a stale write is refused. */
   version?: number;
+  /** The account responsible, when they are a workspace member. */
+  ownerUserId?: string;
   title: string;
   description: string;
   owner: string;
@@ -114,6 +116,8 @@ export interface Task {
   id: string;
   /** Bumped on every edit; sent back on save so a stale write is refused. */
   version?: number;
+  /** The account responsible, when they are a workspace member. */
+  assigneeUserId?: string;
   title: string;
   description: string;
   assignee: string;
@@ -159,6 +163,12 @@ export interface Client {
 
   /* roster — Overview or Clients access */
   industry?: string;
+  /**
+   * The account that owns this client, when the owner is a workspace member.
+   * `owner` remains their name: it stays readable after the account is removed,
+   * and covers people who never had one.
+   */
+  ownerUserId?: string;
   health?: Health;
   owner?: string;
   stage?: Stage;
@@ -206,6 +216,8 @@ export interface FollowUp {
   id: string;
   /** Bumped on every edit; sent back on save so a stale write is refused. */
   version?: number;
+  /** The account responsible, when they are a workspace member. */
+  ownerUserId?: string;
   name: string;
   companyName: string;
   email: string;

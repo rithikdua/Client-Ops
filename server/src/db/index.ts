@@ -1,5 +1,6 @@
 import Database from 'better-sqlite3';
 import { envString } from '../config';
+import { ASSIGNMENT_COLUMNS, linkAssignmentsByName } from '../domain/assignees';
 import { randomUUID } from 'node:crypto';
 import { readFileSync, mkdirSync } from 'node:fs';
 import { dirname, join } from 'node:path';
@@ -7,7 +8,7 @@ import { fileURLToPath } from 'node:url';
 
 const here = dirname(fileURLToPath(import.meta.url));
 
-export const SCHEMA_VERSION = 10;
+export const SCHEMA_VERSION = 11;
 
 /** Absolute path to the SQLite file. Override with DATABASE_PATH. */
 export const DB_PATH = envString('DATABASE_PATH', join(here, '..', '..', 'data', 'client-ops.db'));
@@ -86,6 +87,24 @@ function ensureInvoiceNumberIndex(db: Db): void {
  * existing table has to be applied here too.
  */
 function migrate(db: Db, from: number): void {
+  if (from < 11) {
+    // v11: assignments point at accounts, not at whatever the name was that day.
+    for (const [table, , idColumn] of ASSIGNMENT_COLUMNS) {
+      const columns = db.prepare(`PRAGMA table_info(${table})`).all() as { name: string }[];
+      if (!columns.some((c) => c.name === idColumn)) {
+        db.exec(
+          `ALTER TABLE ${table} ADD COLUMN ${idColumn} TEXT REFERENCES users(id) ON DELETE SET NULL`,
+        );
+      }
+    }
+    linkAssignmentsByName(db);
+    db.exec(`
+      CREATE INDEX IF NOT EXISTS idx_clients_owner_user ON clients(owner_user_id);
+      CREATE INDEX IF NOT EXISTS idx_deliverables_owner_user ON deliverables(owner_user_id);
+      CREATE INDEX IF NOT EXISTS idx_tasks_assignee_user ON tasks(assignee_user_id);
+      CREATE INDEX IF NOT EXISTS idx_follow_ups_owner_user ON follow_ups(owner_user_id);
+    `);
+  }
   if (from < 10) {
     // v10: the Google address is recorded separately instead of overwriting the
     // account's own email.

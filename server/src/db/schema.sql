@@ -64,7 +64,16 @@ CREATE TABLE IF NOT EXISTS clients (
   name                 TEXT NOT NULL,
   industry             TEXT NOT NULL DEFAULT '',
   health               TEXT NOT NULL CHECK (health IN ('Active', 'At Risk', 'Churned')),
+  -- Who runs this account. Two columns on purpose, and every assignment below
+  -- follows the same pattern:
+  --
+  --   owner_user_id  the account, when the person is a workspace member. Survives
+  --                  a rename, and is what "my clients" will be built from.
+  --   owner          their name as it stood when assigned. Keeps history readable
+  --                  after someone is removed (the id goes NULL, the name stays)
+  --                  and holds a name that was never an account at all.
   owner                TEXT NOT NULL DEFAULT '',
+  owner_user_id        TEXT REFERENCES users(id) ON DELETE SET NULL,
   stage                TEXT NOT NULL CHECK (stage IN ('Onboarding', 'Live', 'Renewal', 'Offboarding')),
   currency             TEXT NOT NULL DEFAULT 'INR',
   billing_cycle        TEXT NOT NULL CHECK (billing_cycle IN ('Monthly', 'Quarterly', 'Annual', 'One-time')),
@@ -147,6 +156,7 @@ CREATE TABLE IF NOT EXISTS deliverables (
   title       TEXT NOT NULL,
   description TEXT NOT NULL DEFAULT '',
   owner       TEXT NOT NULL DEFAULT '',
+  owner_user_id TEXT REFERENCES users(id) ON DELETE SET NULL,
   due_date    TEXT NOT NULL,
   status      TEXT NOT NULL CHECK (status IN ('Not started', 'In progress', 'Done')),
   file_name   TEXT,
@@ -191,6 +201,7 @@ CREATE TABLE IF NOT EXISTS tasks (
   title       TEXT NOT NULL,
   description TEXT NOT NULL DEFAULT '',
   assignee    TEXT NOT NULL DEFAULT '',
+  assignee_user_id TEXT REFERENCES users(id) ON DELETE SET NULL,
   status      TEXT NOT NULL CHECK (status IN ('New', 'In Dev', 'Pending', 'Blocked', 'Done')),
   priority    TEXT NOT NULL CHECK (priority IN ('Highest', 'High', 'Medium', 'Low', 'Lowest')),
   due_date    TEXT NOT NULL DEFAULT '',
@@ -220,6 +231,7 @@ CREATE TABLE IF NOT EXISTS follow_ups (
   related_client_id TEXT REFERENCES clients(id) ON DELETE SET NULL,
   reason            TEXT NOT NULL DEFAULT '',
   owner             TEXT NOT NULL DEFAULT '',
+  owner_user_id     TEXT REFERENCES users(id) ON DELETE SET NULL,
   due_date          TEXT NOT NULL,
   status            TEXT NOT NULL DEFAULT 'Pending' CHECK (status IN ('Pending', 'Done')),
   -- Bumped on every edit, so a stale write can be refused rather than
@@ -318,3 +330,9 @@ CREATE TABLE IF NOT EXISTS idempotency_keys (
 );
 
 CREATE INDEX IF NOT EXISTS idx_idempotency_created ON idempotency_keys(created_at);
+
+-- Finding everything assigned to one person, which is the point of the ids.
+CREATE INDEX IF NOT EXISTS idx_clients_owner_user ON clients(owner_user_id);
+CREATE INDEX IF NOT EXISTS idx_deliverables_owner_user ON deliverables(owner_user_id);
+CREATE INDEX IF NOT EXISTS idx_tasks_assignee_user ON tasks(assignee_user_id);
+CREATE INDEX IF NOT EXISTS idx_follow_ups_owner_user ON follow_ups(owner_user_id);
